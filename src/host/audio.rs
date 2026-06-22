@@ -549,10 +549,12 @@ impl AudioEngine {
                 let st = stream.stats.last_input_render_status.load(Ordering::Relaxed);
                 let in_peak =
                     stream.stats.input_peak_micros.swap(0, Ordering::Relaxed) as f64 / 1.0e6;
+                let skips = stream.stats.lock_skips.swap(0, Ordering::Relaxed);
+                let oversize = stream.stats.oversize_blocks.swap(0, Ordering::Relaxed);
                 let dt = last_log.elapsed().as_secs_f64();
                 let rate = ((cb - last_callbacks) as f64 / dt) as u64;
                 tracing::info!(
-                    "duplex: {rate} callbacks/s (total {cb}), input-render errors {errs} (last status {st}), device-in peak {in_peak:.4}"
+                    "duplex: {rate} callbacks/s (total {cb}), input-render errors {errs} (last status {st}), device-in peak {in_peak:.4}, lock-skips {skips}, oversize {oversize}"
                 );
                 last_callbacks = cb;
                 last_log = std::time::Instant::now();

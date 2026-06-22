@@ -165,6 +165,12 @@ impl EditorPump {
         let mut armed_burst = false;
 
         pump_main_run_loop_once(PUMP_INTERVAL);
+
+        // Critical section A: editor idle + preset/state-change detection. Kept
+        // separate from the (heavy) param scan below so each lock hold is short —
+        // the audio thread takes this same lock at block rate, and a shorter hold
+        // means process() / parameter delivery is skipped far less often. (Audio
+        // monitoring itself no longer depends on this lock; see coreaudio_duplex.)
         if let Some(mut guard) = state.plugin.try_lock() {
             if let Some(editor) = guard.editor() {
                 editor.on_idle();
@@ -220,33 +226,36 @@ impl EditorPump {
                     }
                 }
             }
+        }
 
-            // Only scan when due: on host edits / explicit refresh (force_sync),
-            // when arming a burst, or on the routine ~10 Hz cadence. Avoids a
-            // 250 Hz full-param sweep that starves the audio thread's lock.
-            let do_scan = force_sync || armed_burst || tick % SYNC_INTERVAL_TICKS == 0;
-            let changed = if do_scan {
-                sync_params_from_plugin(
+        // Only scan when due: on host edits / explicit refresh (force_sync), when
+        // arming a burst, or on the routine ~10 Hz cadence. Avoids a 250 Hz
+        // full-param sweep that starves the audio thread's lock.
+        let do_scan = force_sync || armed_burst || tick % SYNC_INTERVAL_TICKS == 0;
+        if do_scan {
+            // Critical section B: the full-param scan (heavy COM + lock). Acquired
+            // separately from section A so the audio thread gets a window to take
+            // the lock between editor idle and this scan.
+            if let Some(mut guard) = state.plugin.try_lock() {
+                let changed = sync_params_from_plugin(
                     &mut guard,
                     &state.parameters,
                     force_sync,
                     Some(&state.pending_ws),
-                )
-            } else {
-                0
-            };
-            if changed > 0 {
-                state
-                    .param_epoch
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            }
-            if in_burst || armed_burst {
-                let total = state
-                    .burst_changed
-                    .fetch_add(changed as u32, Ordering::Relaxed)
-                    + changed as u32;
-                if in_burst && pending == 1 {
-                    log_refresh_outcome(total as usize, true);
+                );
+                if changed > 0 {
+                    state
+                        .param_epoch
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                if in_burst || armed_burst {
+                    let total = state
+                        .burst_changed
+                        .fetch_add(changed as u32, Ordering::Relaxed)
+                        + changed as u32;
+                    if in_burst && pending == 1 {
+                        log_refresh_outcome(total as usize, true);
+                    }
                 }
             }
         }

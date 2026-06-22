@@ -8,6 +8,9 @@ Project documentation, organized by purpose.
   later: symptoms, root-cause analysis so far, what's been tried, and leading hypotheses.
   - [`jitter-on-param-sync.md`](active-issues/jitter-on-param-sync.md) — periodic
     choppiness during parameter changes.
+  - [`audio-artifacts-duplex-monitoring.md`](active-issues/audio-artifacts-duplex-monitoring.md) —
+    clicks/dropouts in the `--duplex` monitor path (resolved: monitoring decoupled
+    from the plugin lock), with remaining optional optimizations.
 
 - **[`designs/`](designs/)** — design decisions and the reasoning ("why"), so the
   architecture is understandable without re-deriving it from the code.

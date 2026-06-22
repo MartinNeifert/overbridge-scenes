@@ -41,6 +41,13 @@ pub struct DuplexStats {
     pub last_input_render_status: AtomicI32,
     /// Peak abs sample (×1e6) seen on the device INPUT (device→computer).
     pub input_peak_micros: AtomicU64,
+    /// Callbacks where the plugin lock was unavailable (process() skipped). This
+    /// no longer drops audio — monitoring runs regardless — but a high rate
+    /// points at editor-thread lock contention worth trimming.
+    pub lock_skips: AtomicU64,
+    /// Callbacks whose device block exceeded the preallocated capacity (would
+    /// truncate). Should stay 0; non-zero means raise the capacity.
+    pub oversize_blocks: AtomicU64,
 }
 
 /// How the device's audio is monitored back to its own output.
@@ -67,10 +74,14 @@ struct CallbackCtx {
     in_channels: usize,
     out_channels: usize,
     max_block: usize,
+    /// Frame capacity the scratch buffers are preallocated for. The device block
+    /// is clamped to this so the audio thread never reallocates or truncates in
+    /// practice (set well above the negotiated 128).
+    capacity_frames: usize,
     sr: f64,
-    /// Interleaved input scratch: in_channels * max_block.
+    /// Interleaved input scratch: in_channels * capacity_frames.
     input_scratch: Vec<f32>,
-    /// Interleaved output scratch: out_channels * max_block (plugin Main bus).
+    /// Interleaved output scratch: out_channels * capacity_frames.
     output_scratch: Vec<f32>,
     /// Plugin process scratch (the vendored multibus path builds its own bus
     /// buffers internally; these just satisfy the AudioBuffer API).
@@ -226,6 +237,10 @@ impl DuplexStream {
                 "StreamFormat(output)",
             )?;
 
+            // Preallocate scratch well above the negotiated block so the audio
+            // thread never reallocates (or truncates) even if the device hands us
+            // a larger buffer than requested.
+            let capacity_frames = max_block.max(4096);
             let stats = Arc::new(DuplexStats::default());
             let ctx = Box::new(CallbackCtx {
                 plugin,
@@ -237,9 +252,10 @@ impl DuplexStream {
                 in_channels,
                 out_channels,
                 max_block,
+                capacity_frames,
                 sr: preferred_sr,
-                input_scratch: vec![0.0f32; in_channels * max_block],
-                output_scratch: vec![0.0f32; out_channels * max_block],
+                input_scratch: vec![0.0f32; in_channels * capacity_frames],
+                output_scratch: vec![0.0f32; out_channels * capacity_frames],
                 dummy_in: vec![0.0f32; max_block],
                 dummy_out: vec![0.0f32; max_block],
                 monitor,
@@ -292,76 +308,103 @@ unsafe extern "C" fn render_cb(
     in_number_frames: u32,
     io_data: *mut AudioBufferList,
 ) -> OSStatus {
-    {
-        // Always present silence on the device output first, so even an early
-        // return keeps the stream coherent.
-        if !io_data.is_null() {
-            let abl = &mut *io_data;
-            let buffers =
-                std::slice::from_raw_parts_mut(abl.mBuffers.as_mut_ptr(), abl.mNumberBuffers as usize);
-            for b in buffers.iter_mut() {
-                if !b.mData.is_null() {
-                    std::ptr::write_bytes(b.mData as *mut u8, 0, b.mDataByteSize as usize);
-                }
+    let ctx = &mut *(in_ref_con as *mut CallbackCtx);
+    ctx.stats.callbacks.fetch_add(1, Ordering::Relaxed);
+
+    let mut frames = in_number_frames as usize;
+    if frames == 0 {
+        return 0;
+    }
+    // Clamp to the preallocated capacity so the audio thread never reallocates or
+    // reads/writes out of bounds. With capacity well above the negotiated block
+    // this never triggers; if it ever does, count it (the tail goes silent).
+    if frames > ctx.capacity_frames {
+        ctx.stats.oversize_blocks.fetch_add(1, Ordering::Relaxed);
+        frames = ctx.capacity_frames;
+    }
+
+    let in_ch = ctx.in_channels;
+    let out_ch = ctx.out_channels;
+    let needed = in_ch * frames;
+
+    // 1) Pull device input through the SAME unit (element 1) so the round-trip
+    //    the Engine times is coherent.
+    let mut in_abl = AudioBufferList {
+        mNumberBuffers: 1,
+        mBuffers: [coreaudio_sys::AudioBuffer {
+            mNumberChannels: in_ch as u32,
+            mDataByteSize: (needed * std::mem::size_of::<f32>()) as u32,
+            mData: ctx.input_scratch.as_mut_ptr() as *mut c_void,
+        }],
+    };
+    let render_status = AudioUnitRender(
+        ctx.unit,
+        io_action_flags,
+        in_time_stamp,
+        INPUT_ELEMENT,
+        frames as u32,
+        &mut in_abl,
+    );
+    ctx.stats
+        .last_input_render_status
+        .store(render_status, Ordering::Relaxed);
+    let input_ok = render_status == 0;
+    if !input_ok {
+        ctx.stats.input_render_errors.fetch_add(1, Ordering::Relaxed);
+    }
+
+    // 2) Meter the device input (where the device's own audio arrives).
+    if input_ok {
+        let mut peak = 0.0f32;
+        for &s in ctx.input_scratch[..needed].iter() {
+            let a = s.abs();
+            if a > peak {
+                peak = a;
             }
         }
+        let micros = (peak * 1.0e6) as u64;
+        let prev = ctx.stats.input_peak_micros.load(Ordering::Relaxed);
+        if micros > prev {
+            ctx.stats.input_peak_micros.store(micros, Ordering::Relaxed);
+        }
+    }
 
-        let ctx = &mut *(in_ref_con as *mut CallbackCtx);
-        ctx.stats.callbacks.fetch_add(1, Ordering::Relaxed);
-        let frames = (in_number_frames as usize).min(ctx.max_block);
-        if frames == 0 {
-            return 0;
-        }
-
-        // Pull device input through the SAME unit (element 1) so the round-trip
-        // the Engine times is coherent.
-        let in_ch = ctx.in_channels;
-        let needed = in_ch * frames;
-        if ctx.input_scratch.len() < needed {
-            ctx.input_scratch.resize(needed, 0.0);
-        }
-        let mut in_abl = AudioBufferList {
-            mNumberBuffers: 1,
-            mBuffers: [coreaudio_sys::AudioBuffer {
-                mNumberChannels: in_ch as u32,
-                mDataByteSize: (needed * std::mem::size_of::<f32>()) as u32,
-                mData: ctx.input_scratch.as_mut_ptr() as *mut c_void,
-            }],
-        };
-        let render_status = AudioUnitRender(
-            ctx.unit,
-            io_action_flags,
-            in_time_stamp,
-            INPUT_ELEMENT,
-            in_number_frames,
-            &mut in_abl,
-        );
-        ctx.stats
-            .last_input_render_status
-            .store(render_status, Ordering::Relaxed);
-        if render_status != 0 {
-            ctx.stats.input_render_errors.fetch_add(1, Ordering::Relaxed);
-        }
-        // Meter the device input (where the device's own audio arrives).
-        {
-            let mut peak = 0.0f32;
-            for &s in ctx.input_scratch[..needed].iter() {
-                let a = s.abs();
-                if a > peak {
-                    peak = a;
-                }
-            }
-            let micros = (peak * 1.0e6) as u64;
-            let prev = ctx.stats.input_peak_micros.load(Ordering::Relaxed);
-            if micros > prev {
-                ctx.stats.input_peak_micros.store(micros, Ordering::Relaxed);
+    // 3) Build the monitored device output — INDEPENDENT of the plugin lock so
+    //    audio never drops out on lock contention. While an Overbridge host is
+    //    connected the device's analog Main Out plays the USB *return* (host
+    //    monitoring), and the VST's audio output bus is silent in this context,
+    //    so we route the device's own input (Main L/R) straight back to its
+    //    output, exactly as a DAW does by monitoring the device's tracks. With
+    //    monitoring off (or on input error) we present silence; the output stream
+    //    still runs, keeping the duplex clock and the Engine's measurement
+    //    coherent.
+    let need = out_ch * frames;
+    for v in ctx.output_scratch[..need].iter_mut() {
+        *v = 0.0;
+    }
+    if ctx.monitor.enabled && input_ok {
+        let gain = ctx.monitor.gain;
+        let base = ctx.monitor.source;
+        let in_ch_m = in_ch.max(1);
+        for f in 0..frames {
+            for c in 0..out_ch {
+                let src = f * in_ch_m + (base + c).min(in_ch_m - 1);
+                let dst = f * out_ch + c;
+                ctx.output_scratch[dst] =
+                    ctx.input_scratch.get(src).copied().unwrap_or(0.0) * gain;
             }
         }
+    }
 
-        // Drive the plugin. Never block the audio thread on the plugin lock.
-        let Some(mut p) = ctx.plugin.try_lock() else {
-            return 0;
-        };
+    // 4) Write the monitored output to the device, handling both interleaved
+    //    (one buffer) and non-interleaved (one buffer per channel) layouts so we
+    //    never leave channels silent.
+    write_device_output(io_data, &ctx.output_scratch[..need], out_ch, frames);
+
+    // 5) Drive the plugin for parameter / MIDI delivery (its audio output is
+    //    unused for monitoring, so skipping it on lock contention costs nothing
+    //    audible). Never block the audio thread on the plugin lock.
+    if let Some(mut p) = ctx.plugin.try_lock() {
         while let Ok(cmd) = ctx.cmd_rx.try_recv() {
             apply_command(
                 &mut p,
@@ -372,13 +415,16 @@ unsafe extern "C" fn render_cb(
             );
         }
 
-        ctx.dummy_in[..frames].fill(0.0);
-        ctx.dummy_out[..frames].fill(0.0);
-        let inputs: Vec<&[f32]> = vec![&ctx.dummy_in[..frames]];
-        let mut outputs: Vec<&mut [f32]> = vec![&mut ctx.dummy_out[..frames]];
+        // process() runs at the activated block size; clamp here (audio fidelity
+        // comes from the monitor path above, not the plugin output).
+        let pframes = frames.min(ctx.max_block);
+        ctx.dummy_in[..pframes].fill(0.0);
+        ctx.dummy_out[..pframes].fill(0.0);
+        let inputs = [&ctx.dummy_in[..pframes]];
+        let mut outputs = [&mut ctx.dummy_out[..pframes]];
         let bus_in = [BusRange::new(0, 1)];
         let bus_out = [BusRange::new(0, 1)];
-        let mut buffer = AudioBuffer::new(&inputs, &mut outputs, frames, &bus_in, &bus_out);
+        let mut buffer = AudioBuffer::new(&inputs, &mut outputs, pframes, &bus_in, &bus_out);
 
         let mut events = EventList::default();
         if let Some(mut pend) = ctx.pending_events.try_lock() {
@@ -388,7 +434,7 @@ unsafe extern "C" fn render_cb(
         }
         // Present a valid, advancing, "playing" transport — a DAW always does,
         // and the Overbridge plugin only streams the device's audio when it sees
-        // one. Without it the plugin's output bus stays silent.
+        // one.
         let beats = (ctx.play_samples as f64 / ctx.sr) * (120.0 / 60.0);
         let transport = truce_rack_core::transport::TransportInfo {
             tempo_bpm: Some(120.0),
@@ -400,7 +446,7 @@ unsafe extern "C" fn render_cb(
             recording: false,
             loop_active: false,
         };
-        ctx.play_samples += frames as i64;
+        ctx.play_samples += pframes as i64;
 
         let mut out_events = EventList::default();
         let mut pctx = ProcessContext {
@@ -410,59 +456,62 @@ unsafe extern "C" fn render_cb(
             output_events: &mut out_events,
         };
         let _ = p.process(&mut buffer, &events, &mut pctx);
-        drop(p);
+    } else {
+        ctx.stats.lock_skips.fetch_add(1, Ordering::Relaxed);
+    }
 
-        // Build the device output. While an Overbridge host is connected the
-        // device's analog Main Out plays the USB *return* (host monitoring), not
-        // the device's own internal mix — and the Overbridge VST's audio output
-        // bus is silent in this hosting context. So to keep the analog out
-        // audible we monitor the device's own audio (which arrives on the
-        // CoreAudio INPUT channels) straight back to its output, exactly as a DAW
-        // does by monitoring the device's tracks. With monitoring off we present
-        // silence (the device output still runs, keeping the duplex clock and the
-        // Engine's round-trip measurement coherent).
-        let out_ch = ctx.out_channels;
-        let need = out_ch * frames;
-        if ctx.output_scratch.len() < need {
-            ctx.output_scratch.resize(need, 0.0);
-        }
-        for v in ctx.output_scratch[..need].iter_mut() {
-            *v = 0.0;
-        }
-        if ctx.monitor.enabled {
-            let in_ch = ctx.in_channels.max(1);
-            let gain = ctx.monitor.gain;
-            let base = ctx.monitor.source;
-            for f in 0..frames {
-                for c in 0..out_ch {
-                    let src = f * in_ch + (base + c).min(in_ch - 1);
-                    let dst = f * out_ch + c;
-                    ctx.output_scratch[dst] =
-                        ctx.input_scratch.get(src).copied().unwrap_or(0.0) * gain;
+    0
+}
+
+/// Write interleaved `out_ch`-channel samples to a CoreAudio output
+/// `AudioBufferList`, handling both interleaved (one buffer) and non-interleaved
+/// (one buffer per channel) layouts. Any frames/bytes beyond `src` are zeroed.
+unsafe fn write_device_output(
+    io_data: *mut AudioBufferList,
+    src: &[f32],
+    out_ch: usize,
+    frames: usize,
+) {
+    if io_data.is_null() {
+        return;
+    }
+    let abl = &mut *io_data;
+    let buffers =
+        std::slice::from_raw_parts_mut(abl.mBuffers.as_mut_ptr(), abl.mNumberBuffers as usize);
+
+    if buffers.len() >= out_ch && out_ch > 0 && buffers[0].mNumberChannels == 1 {
+        // Non-interleaved: one buffer per channel.
+        for (c, b) in buffers.iter_mut().enumerate() {
+            if b.mData.is_null() {
+                continue;
+            }
+            let cap = (b.mDataByteSize as usize) / std::mem::size_of::<f32>();
+            let dst = std::slice::from_raw_parts_mut(b.mData as *mut f32, cap);
+            if c < out_ch {
+                let n = frames.min(cap);
+                for f in 0..n {
+                    dst[f] = src[f * out_ch + c];
+                }
+                for s in dst.iter_mut().take(cap).skip(n) {
+                    *s = 0.0;
+                }
+            } else {
+                for s in dst.iter_mut() {
+                    *s = 0.0;
                 }
             }
         }
-
-        if !io_data.is_null() {
-            let abl = &mut *io_data;
-            let buffers = std::slice::from_raw_parts_mut(
-                abl.mBuffers.as_mut_ptr(),
-                abl.mNumberBuffers as usize,
-            );
-            // Device output is interleaved Float32 in a single buffer.
-            if let Some(b) = buffers.first_mut() {
-                if !b.mData.is_null() {
-                    let dst = std::slice::from_raw_parts_mut(
-                        b.mData as *mut f32,
-                        (b.mDataByteSize as usize) / std::mem::size_of::<f32>(),
-                    );
-                    let n = dst.len().min(need);
-                    dst[..n].copy_from_slice(&ctx.output_scratch[..n]);
-                }
+    } else if let Some(b) = buffers.first_mut() {
+        // Interleaved: a single buffer carrying all channels.
+        if !b.mData.is_null() {
+            let cap = (b.mDataByteSize as usize) / std::mem::size_of::<f32>();
+            let dst = std::slice::from_raw_parts_mut(b.mData as *mut f32, cap);
+            let n = src.len().min(cap);
+            dst[..n].copy_from_slice(&src[..n]);
+            for s in dst.iter_mut().take(cap).skip(n) {
+                *s = 0.0;
             }
         }
-
-        0
     }
 }
 
