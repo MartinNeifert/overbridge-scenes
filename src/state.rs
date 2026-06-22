@@ -135,13 +135,29 @@ impl AppState {
 
         let new_host = PluginHost::start(
             instance,
-            plugin_host_mod::resolve_audio_device(&self.config, &info.name)
-                .context("open Overbridge audio device")?,
+            plugin_host_mod::resolve_audio_device(&self.config, &info.name).ok(),
             self.config.block_size,
             editor_open_rx,
             param_change_rx,
             param_refresh_rx,
             false,
+            self.config.control_only,
+            false,
+            false,
+            if self.config.duplex.enabled {
+                Some(crate::host::DuplexSettings {
+                    device: if self.config.duplex.device.is_empty() {
+                        info.name.clone()
+                    } else {
+                        self.config.duplex.device.clone()
+                    },
+                    monitor: self.config.duplex.monitor,
+                    monitor_source: self.config.duplex.monitor_source,
+                    monitor_gain: self.config.duplex.monitor_gain,
+                })
+            } else {
+                None
+            },
         )
         .context("start audio host")?;
 

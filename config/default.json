@@ -5,6 +5,14 @@
   "sample_rate": 48000,
   "block_size": 128,
   "overbridge_engine": "/Applications/Elektron/Overbridge Engine.app",
+  "control_only": false,
+  "duplex": {
+    "enabled": true,
+    "device": "Digitakt",
+    "monitor": true,
+    "monitor_source": 0,
+    "monitor_gain": 1.0
+  },
   "midi": {
     "enabled": true,
     "virtual_port_name": "Overbridge Host Control"

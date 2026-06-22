@@ -37,6 +37,36 @@ pub fn find_overbridge_device(hints: &[String], sample_rate: u32, block_size: us
 
     let device = picked.context("no Overbridge audio device found — connect hardware and start Overbridge Engine")?;
     let name = device.name().unwrap_or_else(|_| "unknown".into());
+
+    if let Ok(def) = device.default_output_config() {
+        tracing::info!(
+            "Device \"{}\" default OUTPUT config: {} ch, {} Hz, buffer {:?}",
+            name, def.channels(), def.sample_rate().0, def.buffer_size()
+        );
+    }
+    if let Ok(configs) = device.supported_output_configs() {
+        for c in configs {
+            tracing::info!(
+                "  supported OUTPUT: {} ch, {}–{} Hz, buffer {:?}",
+                c.channels(), c.min_sample_rate().0, c.max_sample_rate().0, c.buffer_size()
+            );
+        }
+    }
+    if let Ok(def) = device.default_input_config() {
+        tracing::info!(
+            "Device \"{}\" default INPUT config: {} ch, {} Hz, buffer {:?}",
+            name, def.channels(), def.sample_rate().0, def.buffer_size()
+        );
+    }
+    if let Ok(configs) = device.supported_input_configs() {
+        for c in configs {
+            tracing::info!(
+                "  supported INPUT: {} ch, {}–{} Hz, buffer {:?}",
+                c.channels(), c.min_sample_rate().0, c.max_sample_rate().0, c.buffer_size()
+            );
+        }
+    }
+
     let supported = pick_best_config(&device, sample_rate)?;
     let mut stream_config: StreamConfig = supported.config();
     stream_config.sample_rate = SampleRate(sample_rate);

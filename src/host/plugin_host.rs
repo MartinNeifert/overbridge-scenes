@@ -71,12 +71,16 @@ pub struct PluginHost {
 impl PluginHost {
     pub fn start(
         plugin: Vst3Plugin,
-        audio_device: OverbridgeAudioDevice,
+        audio_device: Option<OverbridgeAudioDevice>,
         block_size: usize,
         editor_open_rx: Receiver<()>,
         param_change_rx: Receiver<(u32, f64)>,
         param_refresh_rx: Receiver<()>,
         use_gui: bool,
+        control_only: bool,
+        monitor: bool,
+        passthru: bool,
+        duplex: Option<crate::host::audio::DuplexSettings>,
     ) -> Result<Self> {
         let plugin_info = plugin.info().clone();
         let param_count = plugin.parameter_count();
@@ -96,6 +100,15 @@ impl PluginHost {
 
         tracing::info!("Plugin exposes {param_count} parameters");
 
+        for (name, is_input, ch) in plugin.describe_audio_buses() {
+            tracing::info!(
+                "Audio bus: {:7} \"{}\" — {} channels",
+                if is_input { "INPUT" } else { "OUTPUT" },
+                name,
+                ch
+            );
+        }
+
         let parameters = Arc::new(RwLock::new(snapshots));
         let param_index = Arc::new(RwLock::new(name_index));
         let pending_ws = Arc::new(Mutex::new(Vec::new()));
@@ -105,8 +118,11 @@ impl PluginHost {
         let (audio_ready_tx, audio_ready_rx) = unbounded();
         let (param_flush_tx, param_flush_rx) = unbounded();
 
-        let audio_device_name = audio_device.name.clone();
-        let audio_channels = audio_device.channels;
+        let audio_device_name = audio_device
+            .as_ref()
+            .map(|d| d.name.clone())
+            .unwrap_or_else(|| plugin_info.name.clone());
+        let audio_channels = audio_device.as_ref().map(|d| d.channels).unwrap_or(2);
 
         let shared_plugin: SharedPlugin = Arc::new(Mutex::new(plugin));
 
@@ -124,6 +140,10 @@ impl PluginHost {
                     params_for_audio,
                     audio_ready_tx,
                     param_flush_tx,
+                    control_only,
+                    monitor,
+                    passthru,
+                    duplex,
                 ) {
                     tracing::error!("Audio engine error: {e:#}");
                 }

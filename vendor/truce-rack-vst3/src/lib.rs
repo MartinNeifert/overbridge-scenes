@@ -46,7 +46,8 @@ use std::path::{Path, PathBuf};
 use std::ptr;
 
 use vst3::Steinberg::Vst::{
-    AudioBusBuffers, AudioBusBuffers__type0, Event, Event_::EventTypes_, Event__type0,
+    AudioBusBuffers, AudioBusBuffers__type0, BusDirections_, BusInfo, Event, Event_::EventTypes_,
+    Event__type0, MediaTypes_,
     IAudioProcessor, IAudioProcessorTrait, IComponent, IComponentTrait, IConnectionPoint,
     IConnectionPointTrait, IEditController, IEditControllerTrait, IEventList, IEventListTrait,
     IComponentHandler, IEditControllerHostEditing, IEditControllerHostEditingTrait,
@@ -567,6 +568,16 @@ pub struct Vst3Plugin {
     _component_handler: ComWrapper<HostComponentHandler>,
     /// Parameter changes queued for the next `process()` call.
     pending_param_changes: Vec<(ParamID, ParamValue)>,
+
+    /// Channel count of each audio bus, captured at `activate()` so the plugin
+    /// is hosted at its native multibus layout (e.g. the Digitakt's 10 stereo
+    /// output buses) instead of a forced single stereo bus.
+    input_bus_channels: Vec<usize>,
+    output_bus_channels: Vec<usize>,
+    /// Reusable per-channel scratch buffers for `process()`, one Vec per channel
+    /// across all buses. The device's audio (plugin output) is discarded here —
+    /// we process only to keep the Overbridge Engine's stream alive.
+    process_scratch: Vec<Vec<f32>>,
 }
 
 impl Vst3Plugin {
@@ -700,6 +711,9 @@ impl Vst3Plugin {
             _host_app: host_app,
             _component_handler: component_handler,
             pending_param_changes: Vec::new(),
+            input_bus_channels: Vec::new(),
+            output_bus_channels: Vec::new(),
+            process_scratch: Vec::new(),
         })
     }
 }
@@ -805,6 +819,62 @@ impl Vst3Plugin {
         unsafe { self.controller.setComponentState(stream.as_ptr()) }
     }
 
+    /// Drop the parameter changes queued for the next `process()` call.
+    ///
+    /// Controller-only hosting (no audio engine, `process()` never called)
+    /// delivers values through `IEditController::setParamNormalized` only, so the
+    /// `process()` queue would otherwise grow without bound. Call this after
+    /// applying a batch to keep memory flat.
+    pub fn clear_pending_param_changes(&mut self) {
+        self.pending_param_changes.clear();
+    }
+
+    /// Copy the most recent `process()` output of the FIRST output bus (e.g. the
+    /// device's "Main" bus) into an interleaved buffer. Used to route the
+    /// plugin's output to the hardware's CoreAudio output so the Overbridge
+    /// Engine's round-trip latency probe reaches the device (a DAW does this
+    /// when the device is its output). `out` must hold `channels * frames`.
+    pub fn read_first_output_bus(&self, channels: usize, frames: usize, out: &mut [f32]) {
+        let base: usize = self.input_bus_channels.iter().sum();
+        for ch in 0..channels {
+            let idx = base + ch;
+            let Some(src) = self.process_scratch.get(idx) else {
+                continue;
+            };
+            for f in 0..frames {
+                let o = f * channels + ch;
+                if o < out.len() {
+                    out[o] = src.get(f).copied().unwrap_or(0.0);
+                }
+            }
+        }
+    }
+
+    /// Query the plugin's audio bus layout (name, direction, channel count) as
+    /// the plugin actually reports it — used to host it at its native layout
+    /// rather than forcing stereo. Returns `(name, is_input, channel_count)`.
+    pub fn describe_audio_buses(&self) -> Vec<(String, bool, i32)> {
+        let mut out = Vec::new();
+        for (is_input, dir) in [
+            (true, BusDirections_::kInput as i32),
+            (false, BusDirections_::kOutput as i32),
+        ] {
+            let count =
+                unsafe { self.component.getBusCount(MediaTypes_::kAudio as i32, dir) };
+            for i in 0..count {
+                let mut info: BusInfo = unsafe { std::mem::zeroed() };
+                if unsafe {
+                    self.component
+                        .getBusInfo(MediaTypes_::kAudio as i32, dir, i, &raw mut info)
+                } == kResultOk
+                {
+                    let name = string128_to_string(&info.name);
+                    out.push((name, is_input, info.channelCount));
+                }
+            }
+        }
+        out
+    }
 }
 
 impl PluginCore for Vst3Plugin {
@@ -932,23 +1002,51 @@ impl PluginCore for Vst3Plugin {
         sample_rate: f64,
         max_block_size: usize,
     ) -> Result<()> {
-        let in_ch = u32::try_from(layout.total_input_channels()).unwrap_or(2).max(1);
-        let out_ch = u32::try_from(layout.total_output_channels()).unwrap_or(2).max(1);
-        let mut input_arr = speaker_arrangement_for_channels(in_ch);
-        let mut output_arr = speaker_arrangement_for_channels(out_ch);
-        if unsafe {
-            self.processor
-                .setBusArrangements(&raw mut input_arr, 1, &raw mut output_arr, 1)
-        } != kResultOk
-        {
-            // Fall back to stereo when the plugin rejects a wider layout.
-            input_arr = STEREO_ARRANGEMENT;
-            output_arr = STEREO_ARRANGEMENT;
-            let _ = unsafe {
-                self.processor
-                    .setBusArrangements(&raw mut input_arr, 1, &raw mut output_arr, 1)
-            };
+        // Host the plugin at the layout it actually reports (e.g. the Digitakt's
+        // 0 inputs / 10 stereo output buses) instead of forcing a single stereo
+        // bus. Feeding the Overbridge plugin a malformed bus layout makes the
+        // Engine cut the device's audio.
+        let buses = self.describe_audio_buses();
+        let mut input_channels: Vec<usize> = Vec::new();
+        let mut output_channels: Vec<usize> = Vec::new();
+        for (_, is_input, ch) in &buses {
+            let c = usize::try_from(*ch).unwrap_or(0);
+            if *is_input {
+                input_channels.push(c);
+            } else {
+                output_channels.push(c);
+            }
         }
+
+        // Request a speaker arrangement matching each reported bus. This is
+        // best-effort: if the plugin rejects it, its default arrangement already
+        // matches the buses it advertised, so we proceed regardless.
+        let mut input_arr: Vec<u64> = input_channels
+            .iter()
+            .map(|&c| speaker_arrangement_for_channels(u32::try_from(c).unwrap_or(2)))
+            .collect();
+        let mut output_arr: Vec<u64> = output_channels
+            .iter()
+            .map(|&c| speaker_arrangement_for_channels(u32::try_from(c).unwrap_or(2)))
+            .collect();
+        let in_ptr = if input_arr.is_empty() {
+            ptr::null_mut()
+        } else {
+            input_arr.as_mut_ptr()
+        };
+        let out_ptr = if output_arr.is_empty() {
+            ptr::null_mut()
+        } else {
+            output_arr.as_mut_ptr()
+        };
+        let _ = unsafe {
+            self.processor.setBusArrangements(
+                in_ptr,
+                i32::try_from(input_arr.len()).unwrap_or(0),
+                out_ptr,
+                i32::try_from(output_arr.len()).unwrap_or(0),
+            )
+        };
 
         let mut setup = ProcessSetup {
             #[allow(clippy::cast_possible_wrap)]
@@ -963,6 +1061,30 @@ impl PluginCore for Vst3Plugin {
                 "IAudioProcessor::setupProcessing failed".into(),
             ));
         }
+
+        // Activate every audio bus so the Engine streams all of them (a DAW
+        // does this; leaving aux buses inactive starves the device's stream).
+        for idx in 0..input_channels.len() {
+            unsafe {
+                self.component.activateBus(
+                    MediaTypes_::kAudio as i32,
+                    BusDirections_::kInput as i32,
+                    i32::try_from(idx).unwrap_or(0),
+                    1,
+                );
+            }
+        }
+        for idx in 0..output_channels.len() {
+            unsafe {
+                self.component.activateBus(
+                    MediaTypes_::kAudio as i32,
+                    BusDirections_::kOutput as i32,
+                    i32::try_from(idx).unwrap_or(0),
+                    1,
+                );
+            }
+        }
+
         if unsafe { self.component.setActive(1) } != kResultOk {
             return Err(Error::Other("IComponent::setActive(true) failed".into()));
         }
@@ -971,6 +1093,16 @@ impl PluginCore for Vst3Plugin {
                 "IAudioProcessor::setProcessing(true) failed".into(),
             ));
         }
+
+        // Pre-size reusable per-channel scratch for process().
+        let total_channels: usize =
+            input_channels.iter().chain(output_channels.iter()).sum();
+        self.process_scratch = (0..total_channels)
+            .map(|_| vec![0.0f32; max_block_size])
+            .collect();
+        self.input_bus_channels = input_channels;
+        self.output_bus_channels = output_channels;
+
         self.processing = true;
         self.active_layout = Some(layout);
         Ok(())
@@ -1170,6 +1302,11 @@ fn build_vst3_context(t: &TransportInfo, sample_rate: f64) -> Vst3ProcessContext
     }
     if let Some(samples) = t.song_position_samples {
         ctx.projectTimeSamples = samples;
+        // DAWs always provide the continuous (free-running) sample clock with
+        // kContTimeValid. Some plugins (e.g. Overbridge) only stream audio when
+        // a valid, advancing time line is present, so mirror that here.
+        ctx.continousTimeSamples = samples;
+        state |= StatesAndFlags_::kContTimeValid as u32;
     }
     if let Some(bar) = t.bar_start_beats {
         ctx.barPositionMusic = bar;
@@ -1237,26 +1374,73 @@ impl Plugin<f32> for Vst3Plugin {
             .and_then(|w| w.to_com_ptr::<IParameterChanges>())
             .map_or(ptr::null_mut(), |p| p.as_ptr());
 
-        let main_inputs = buffer.main_inputs();
-        let mut input_ptrs: Vec<*mut f32> =
-            main_inputs.iter().map(|c| c.as_ptr().cast_mut()).collect();
-        let mut input_bus = AudioBusBuffers {
-            numChannels: i32::try_from(input_ptrs.len()).unwrap_or(0),
-            silenceFlags: 0,
-            __field0: AudioBusBuffers__type0 {
-                channelBuffers32: input_ptrs.as_mut_ptr(),
-            },
-        };
+        // Host the plugin at its full multibus layout (captured at activate()).
+        // Input buses are fed silence; output buses (the device's audio) are
+        // written into scratch and discarded — we process only to keep the
+        // Overbridge Engine's device stream alive and deliver parameter changes.
+        let in_counts = self.input_bus_channels.clone();
+        let out_counts = self.output_bus_channels.clone();
+        let total_channels: usize = in_counts.iter().chain(out_counts.iter()).sum();
 
-        let main_outputs = buffer.main_outputs();
-        let mut output_ptrs: Vec<*mut f32> =
-            main_outputs.iter_mut().map(|c| c.as_mut_ptr()).collect();
-        let mut output_bus = AudioBusBuffers {
-            numChannels: i32::try_from(output_ptrs.len()).unwrap_or(0),
-            silenceFlags: 0,
-            __field0: AudioBusBuffers__type0 {
-                channelBuffers32: output_ptrs.as_mut_ptr(),
-            },
+        if self.process_scratch.len() < total_channels {
+            self.process_scratch
+                .resize_with(total_channels, || vec![0.0f32; frames]);
+        }
+        for ch in self.process_scratch.iter_mut() {
+            if ch.len() < frames {
+                ch.resize(frames, 0.0);
+            }
+            for v in ch[..frames].iter_mut() {
+                *v = 0.0;
+            }
+        }
+
+        // Per-bus channel-pointer arrays must outlive the process() call.
+        let mut chan_ptrs: Vec<Vec<*mut f32>> =
+            Vec::with_capacity(in_counts.len() + out_counts.len());
+        let mut idx = 0usize;
+        for &ch_count in in_counts.iter().chain(out_counts.iter()) {
+            let mut ptrs = Vec::with_capacity(ch_count);
+            for _ in 0..ch_count {
+                if idx < self.process_scratch.len() {
+                    ptrs.push(self.process_scratch[idx].as_mut_ptr());
+                }
+                idx += 1;
+            }
+            chan_ptrs.push(ptrs);
+        }
+
+        let mut input_buses: Vec<AudioBusBuffers> = Vec::with_capacity(in_counts.len());
+        for (i, &ch_count) in in_counts.iter().enumerate() {
+            input_buses.push(AudioBusBuffers {
+                numChannels: i32::try_from(ch_count).unwrap_or(0),
+                silenceFlags: 0,
+                __field0: AudioBusBuffers__type0 {
+                    channelBuffers32: chan_ptrs[i].as_mut_ptr(),
+                },
+            });
+        }
+        let mut output_buses: Vec<AudioBusBuffers> = Vec::with_capacity(out_counts.len());
+        for (j, &ch_count) in out_counts.iter().enumerate() {
+            let pi = in_counts.len() + j;
+            output_buses.push(AudioBusBuffers {
+                numChannels: i32::try_from(ch_count).unwrap_or(0),
+                silenceFlags: 0,
+                __field0: AudioBusBuffers__type0 {
+                    channelBuffers32: chan_ptrs[pi].as_mut_ptr(),
+                },
+            });
+        }
+
+        let inputs_ptr = if input_buses.is_empty() {
+            ptr::null_mut()
+        } else {
+            input_buses.as_mut_ptr()
+        };
+        let outputs_ptr = if output_buses.is_empty() {
+            ptr::null_mut()
+        } else {
+            output_buses.as_mut_ptr()
         };
 
         // Build the transport context up front so its backing
@@ -1271,10 +1455,10 @@ impl Plugin<f32> for Vst3Plugin {
             #[allow(clippy::cast_possible_wrap)]
             symbolicSampleSize: SymbolicSampleSizes_::kSample32 as i32,
             numSamples: i32::try_from(frames).unwrap_or(i32::MAX),
-            numInputs: 1,
-            numOutputs: 1,
-            inputs: &raw mut input_bus,
-            outputs: &raw mut output_bus,
+            numInputs: i32::try_from(input_buses.len()).unwrap_or(0),
+            numOutputs: i32::try_from(output_buses.len()).unwrap_or(0),
+            inputs: inputs_ptr,
+            outputs: outputs_ptr,
             inputParameterChanges: input_param_changes_ptr,
             outputParameterChanges: ptr::null_mut::<IParameterChanges>(),
             inputEvents: input_events_ptr.as_ptr(),

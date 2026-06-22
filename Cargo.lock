@@ -1288,6 +1288,7 @@ dependencies = [
  "axum",
  "baseview",
  "clap",
+ "coreaudio-sys",
  "cpal",
  "crossbeam-channel",
  "dispatch",
