@@ -1,4 +1,4 @@
-# ob-host documentation
+# Overbridge Scenes documentation
 
 Project documentation, organized by purpose.
 
