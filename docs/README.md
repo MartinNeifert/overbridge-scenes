@@ -19,6 +19,9 @@ Project documentation, organized by purpose.
   - [`audio-routing-and-control-options.md`](designs/audio-routing-and-control-options.md) —
     keeping program audio in the box vs. ob-host's control-plane audio loop, and why hosting
     the VST/AU plugin (ob-host) is the only full programmatic-control option.
+  - [`audio-cutout-and-duplex-fix.md`](designs/audio-cutout-and-duplex-fix.md) — why the
+    Digitakt went silent ~5 s after the host connected (Engine latency-probe fault + USB-return
+    monitoring), and the native single-AUHAL duplex + monitoring fix.
   - [`scenes-crossfader.md`](designs/scenes-crossfader.md) — Octatrack-style scenes and the
     A/B crossfader morph engine (standalone web surface at `/scenes.html`).
 

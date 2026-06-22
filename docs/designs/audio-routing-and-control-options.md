@@ -30,26 +30,37 @@ DAW track or loop your mix through the host for the box to make sound.
 Requirements remain: Overbridge Engine running, device in Overbridge USB mode, and (for
 ob-host) the plugin loaded.
 
-### 2. ob-host's internal audio loop is not optional (today)
+### 2. process() must run; opening the device is optional
 
-`ob-host` always opens a duplex cpal stream on the Overbridge CoreAudio device and runs
-`process()` at 48 kHz. This is structural, not incidental:
+The plugin still needs a **live processing graph**:
 
-- The plugin must be **activated with a live processing graph** before the editor / device
-  IPC works.
+- It must be **activated** and have `process()` called before the editor / device IPC works.
 - Host → hardware parameter changes are delivered via **`IParameterChanges` inside
   `process()`** — no `process()` call, no parameter delivery.
-- Overbridge Engine also exchanges audio with the plugin over shared memory internally.
 
-There is currently **no `--control-only` / `--no-audio` mode**. Even when your program
-audio is analog-only, ob-host still runs a control-plane audio loop (often on silence or
-unused USB channels). That loop is what drives parameter sync — and is a contributor to the
-jitter tracked in [`../active-issues/jitter-on-param-sync.md`](../active-issues/jitter-on-param-sync.md).
-It is independent of whether your *music* goes through the Mac.
+But *driving* `process()` does **not** require opening the Overbridge audio device. Two
+modes exist:
 
-> Possible future work: a `--control-only` mode that runs `process()` on silence with
-> minimal buffer work to reduce lock contention, while leaving the analog program path
-> untouched. This is an ob-host change, not a switch Elektron exposes.
+| Mode | How `process()` runs | Effect on the device's audio |
+|------|----------------------|------------------------------|
+| **Control-only** (`control_only: true`, the default; or `--control-only`) | A tick loop calls `process()` on silence at block cadence; no cpal stream is opened | **Untouched** — nothing is written to the device |
+| **Monitor** (`--audio`, or `control_only: false`) | A duplex cpal stream on the Overbridge CoreAudio device drives `process()` | The plugin output is streamed to the device's **USB return**, which **overrides the hardware's own audio** |
+
+This is why streaming audio to the device made the Digitakt go silent: in monitor mode the
+host writes the plugin's output (often silence) to the device's USB-return channels, and the
+device plays that instead of its internal mix. **Control-only avoids the device entirely**,
+so the hardware keeps making sound while parameters/MIDI are still controlled. It also
+sidesteps the audio-loop lock contention behind the
+[param-sync jitter](../active-issues/jitter-on-param-sync.md).
+
+Use `--audio` only if you actually want to monitor the device's audio through the Mac.
+
+> Update: on macOS the supported way to monitor the device while keeping it audible
+> and the Overbridge Engine happy is the native single-AUHAL **duplex** mode
+> (`--duplex`), which the old cpal `--audio` path could not do reliably. See
+> [`audio-cutout-and-duplex-fix.md`](audio-cutout-and-duplex-fix.md) for the root
+> cause (Engine latency-probe fault + the device's analog out playing the USB
+> return) and the fix.
 
 ## Programmatic control options (and why most are dead ends)
 
