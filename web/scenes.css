@@ -53,6 +53,39 @@ body {
 .sc-link:hover { text-decoration: underline; }
 
 /* Crossfader panel */
+.sc-pattern-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.7rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.sc-pattern-group { display: flex; align-items: center; gap: 0.5rem; }
+.sc-pattern-follow { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.sc-pattern-toggle { display: flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; color: var(--text); cursor: pointer; }
+.sc-pattern-bar select {
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+.sc-pattern-id {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius);
+  background: var(--accent, #4f8cff);
+  color: #fff;
+  min-width: 2.6rem;
+  text-align: center;
+}
+
 .sc-crossfader-panel {
   padding: 1.25rem 1.5rem 1rem;
   border-bottom: 1px solid var(--border);

@@ -53,6 +53,7 @@ A standalone control surface for snapshotting parameters into **4 scenes** and m
 - **Baseline** — the neutral value used when one crossfader side is empty (`— None —`) or a parameter is only locked in one scene. Captured from the live device when you assign A/B (or via *Capture baseline*). Assign a scene to B, leave A as None, and slide right to fade current values into that scene.
 - **Crossfader takeover** — optional soft-takeover modes (**Jump**, **Pickup**, **Scale**) so morphing respects live knob changes instead of snapping.
 - **MIDI crossfader** — map an absolute fader (0–127) or infinite encoder to the crossfader from the browser (Web MIDI).
+- **Per-pattern scenes** — scenes are stored per pattern (bank A–P × 1–16), so each Digitakt pattern keeps its own 4 scenes. Pick the pattern manually, or enable **Follow Program Change** to auto-switch from the device's MIDI Program Change. The Digitakt VST exposes no pattern parameter, so Program Change is the live source for the current pattern (see [docs/designs/scenes-crossfader.md](docs/designs/scenes-crossfader.md)).
 
 ### Building a scene
 

@@ -14,11 +14,20 @@ const SCENE_SLOTS = 4;
 const EPS = 1e-4;
 const MAX_RESULTS = 60;
 
+// Pattern model. Elektron devices organise patterns as banks (A, B, …) of 16.
+// The Digitakt VST exposes no pattern parameter, so the active pattern is chosen
+// manually here (or followed from MIDI Program Change). Scenes are stored per
+// pattern: each pattern keeps its own independent set of SCENE_SLOTS scenes.
+const PATTERN_BANKS = 16; // A–P
+const PATTERNS_PER_BANK = 16; // 1–16
+const PATTERN_SEL_PREFIX = "ob-scenes:pattern:"; // remembers the chosen pattern per plugin
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
 let plugin = null; // active plugin name, used to namespace stored scenes
+let pattern = { bank: 0, num: 0 }; // active pattern (0-based bank + number)
 let liveParams = []; // [{index,id,name,value,display,min,max,unit,...}]
 const liveByIndex = new Map(); // index -> snapshot
 
@@ -64,6 +73,12 @@ const el = {
   midiStep: document.getElementById("sc-midi-step"),
   midiLearn: document.getElementById("sc-midi-learn"),
   midiStatus: document.getElementById("sc-midi-status"),
+  patternBank: document.getElementById("sc-pattern-bank"),
+  patternNum: document.getElementById("sc-pattern-num"),
+  patternId: document.getElementById("sc-pattern-id"),
+  pcFollow: document.getElementById("sc-pc-follow"),
+  pcInput: document.getElementById("sc-pc-input"),
+  pcStatus: document.getElementById("sc-pc-status"),
 };
 
 // Soft-takeover mode for the crossfader — how the morph reconciles with each
@@ -143,23 +158,48 @@ function toast(msg) {
 // Persistence (namespaced per loaded plugin)
 // ---------------------------------------------------------------------------
 
+function bankLetter(b) {
+  return String.fromCharCode(65 + clamp(b, 0, PATTERN_BANKS - 1));
+}
+
+function patternKey() {
+  return bankLetter(pattern.bank) + String(pattern.num + 1).padStart(2, "0");
+}
+
+// Scenes are namespaced per plugin AND per pattern, so each pattern keeps its
+// own 4 scenes.
 function storeKey() {
+  return STORE_PREFIX + (plugin || "default") + ":" + patternKey();
+}
+
+// Legacy (pre per-pattern) key — scenes used to be stored per plugin only. We
+// migrate that data into the default pattern (A01) the first time it's opened.
+function legacyStoreKey() {
   return STORE_PREFIX + (plugin || "default");
+}
+
+function writeScenes() {
+  try {
+    localStorage.setItem(
+      storeKey(),
+      JSON.stringify({ scenes, crossfader: { a: crossfader.a, b: crossfader.b } })
+    );
+  } catch (e) {
+    console.warn("scene save failed", e);
+  }
 }
 
 let saveTimer = null;
 function save() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    try {
-      localStorage.setItem(
-        storeKey(),
-        JSON.stringify({ scenes, crossfader: { a: crossfader.a, b: crossfader.b } })
-      );
-    } catch (e) {
-      console.warn("scene save failed", e);
-    }
-  }, 200);
+  saveTimer = setTimeout(writeScenes, 200);
+}
+
+// Flush a pending debounced save immediately — used before switching patterns so
+// the current pattern's edits aren't lost to the still-pending timer.
+function saveNow() {
+  clearTimeout(saveTimer);
+  writeScenes();
 }
 
 function load() {
@@ -168,7 +208,20 @@ function load() {
   baseline = new Map();
   baselineArmed = false;
   try {
-    const raw = localStorage.getItem(storeKey());
+    let raw = localStorage.getItem(storeKey());
+    // One-time migration: pre-pattern scenes land in the default pattern (A01).
+    if (!raw && pattern.bank === 0 && pattern.num === 0) {
+      const legacy = localStorage.getItem(legacyStoreKey());
+      if (legacy) {
+        raw = legacy;
+        try {
+          localStorage.setItem(storeKey(), legacy);
+          localStorage.removeItem(legacyStoreKey());
+        } catch (e) {
+          console.warn("scene migration failed", e);
+        }
+      }
+    }
     if (raw) {
       const data = JSON.parse(raw);
       if (Array.isArray(data.scenes)) {
@@ -219,6 +272,74 @@ function validateScenes() {
       })
       .filter(Boolean);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Pattern selection (scenes are stored per pattern)
+// ---------------------------------------------------------------------------
+
+function patternSelKey() {
+  return PATTERN_SEL_PREFIX + (plugin || "default");
+}
+
+function persistPatternSel() {
+  try {
+    localStorage.setItem(patternSelKey(), JSON.stringify({ bank: pattern.bank, num: pattern.num }));
+  } catch (e) {
+    console.warn("pattern selection save failed", e);
+  }
+}
+
+// Restore the last-selected pattern for the current plugin (defaults to A01).
+function restorePatternSel() {
+  pattern = { bank: 0, num: 0 };
+  try {
+    const raw = localStorage.getItem(patternSelKey());
+    if (raw) {
+      const d = JSON.parse(raw);
+      pattern.bank = clamp(d.bank | 0, 0, PATTERN_BANKS - 1);
+      pattern.num = clamp(d.num | 0, 0, PATTERNS_PER_BANK - 1);
+    }
+  } catch (e) {
+    console.warn("pattern selection load failed", e);
+  }
+}
+
+function fillPatternOptions() {
+  if (!el.patternBank.options.length) {
+    let banks = "";
+    for (let b = 0; b < PATTERN_BANKS; b++) banks += `<option value="${b}">${bankLetter(b)}</option>`;
+    el.patternBank.innerHTML = banks;
+    let nums = "";
+    for (let n = 0; n < PATTERNS_PER_BANK; n++) nums += `<option value="${n}">${n + 1}</option>`;
+    el.patternNum.innerHTML = nums;
+  }
+}
+
+function renderPattern() {
+  fillPatternOptions();
+  el.patternBank.value = String(pattern.bank);
+  el.patternNum.value = String(pattern.num);
+  el.patternId.textContent = patternKey();
+}
+
+// Switch the active pattern: persist the current pattern's scenes, then load the
+// target pattern's own scene set. No values are pushed to the device on switch —
+// only the editable scene set changes.
+function setPattern(bank, num, opts = {}) {
+  bank = clamp(bank | 0, 0, PATTERN_BANKS - 1);
+  num = clamp(num | 0, 0, PATTERNS_PER_BANK - 1);
+  if (bank === pattern.bank && num === pattern.num) {
+    renderPattern();
+    return;
+  }
+  saveNow();
+  endXfGrab();
+  pattern = { bank, num };
+  persistPatternSel();
+  load();
+  renderAll();
+  if (opts.toast !== false) toast(`Pattern ${patternKey()}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -838,7 +959,8 @@ function onSelector(data) {
   const loaded = data.loaded_plugin || null;
   if (loaded !== plugin) {
     plugin = loaded;
-    load(); // load scenes for this plugin namespace
+    restorePatternSel(); // remember the pattern last edited for this plugin
+    load(); // load scenes for this plugin + pattern namespace
     renderAll();
   }
 }
@@ -857,11 +979,19 @@ async function initialParams() {
 }
 
 function renderAll() {
+  renderPattern();
   renderAssign();
   renderCrossfaderReadout();
   renderScenes();
   renderResults();
 }
+
+el.patternBank.addEventListener("change", () =>
+  setPattern(Number(el.patternBank.value), pattern.num)
+);
+el.patternNum.addEventListener("change", () =>
+  setPattern(pattern.bank, Number(el.patternNum.value))
+);
 
 // ---------------------------------------------------------------------------
 // MIDI control of the crossfader (Web MIDI API)
@@ -902,6 +1032,36 @@ function saveMidiCfg() {
   }
 }
 
+// Program Change follow — the device's only live signal of the active pattern.
+// Elektron devices send a Program Change (0–127) when the pattern changes
+// (requires "Program Change Send" enabled on the device). PC n maps to bank
+// floor(n/16) + pattern (n mod 16): PC 0 → A01, PC 16 → B01, … PC 127 → H16.
+const PC_KEY = "ob-scenes:pc-follow";
+let pcInput = null; // currently connected MIDIInput for program change
+
+let pcCfg = (() => {
+  const def = { inputId: null, enabled: false };
+  try {
+    const raw = localStorage.getItem(PC_KEY);
+    if (raw) Object.assign(def, JSON.parse(raw));
+  } catch (e) {
+    console.warn("pc cfg load failed", e);
+  }
+  return def;
+})();
+
+function savePcCfg() {
+  try {
+    localStorage.setItem(PC_KEY, JSON.stringify(pcCfg));
+  } catch (e) {
+    console.warn("pc cfg save failed", e);
+  }
+}
+
+function setPcStatus(msg) {
+  if (el.pcStatus) el.pcStatus.textContent = msg;
+}
+
 function midiMapLabel() {
   if (midiCfg.cc === null) return "no control mapped";
   const ch = midiCfg.channel === null ? "any" : midiCfg.channel + 1;
@@ -915,10 +1075,14 @@ function setMidiStatus(msg) {
 async function initMidi() {
   el.midiMode.value = midiCfg.mode;
   el.midiStep.value = String(midiCfg.step);
+  el.pcFollow.checked = pcCfg.enabled;
   if (!navigator.requestMIDIAccess) {
     setMidiStatus("Web MIDI not supported in this browser");
     el.midiInput.disabled = true;
     el.midiLearn.disabled = true;
+    el.pcInput.disabled = true;
+    el.pcFollow.disabled = true;
+    setPcStatus("Web MIDI not supported — select pattern manually");
     return;
   }
   try {
@@ -931,6 +1095,7 @@ async function initMidi() {
   midiAccess.onstatechange = populateMidiInputs;
   populateMidiInputs();
   if (midiCfg.inputId) connectMidiInput(midiCfg.inputId);
+  if (pcCfg.enabled && pcCfg.inputId) connectPcInput(pcCfg.inputId);
 }
 
 function populateMidiInputs() {
@@ -949,6 +1114,20 @@ function populateMidiInputs() {
     setMidiStatus("Saved MIDI device not connected");
   } else if (!midiInput) {
     setMidiStatus(inputs.length ? "MIDI off" : "No MIDI inputs found");
+  }
+
+  // Same input list drives the Program Change follow selector.
+  const pcCurrent = pcCfg.inputId || "";
+  el.pcInput.innerHTML = '<option value="">Off</option>';
+  for (const inp of inputs) {
+    const opt = document.createElement("option");
+    opt.value = inp.id;
+    opt.textContent = inp.name || inp.id;
+    el.pcInput.appendChild(opt);
+  }
+  el.pcInput.value = inputs.some((i) => i.id === pcCurrent) ? pcCurrent : "";
+  if (pcCfg.enabled && pcCfg.inputId && el.pcInput.value === pcCfg.inputId) {
+    connectPcInput(pcCfg.inputId);
   }
 }
 
@@ -973,6 +1152,36 @@ function connectMidiInput(id) {
   midiCfg.inputId = id;
   saveMidiCfg();
   setMidiStatus(`${inp.name || "MIDI"} · ${midiMapLabel()}`);
+}
+
+function connectPcInput(id) {
+  if (pcInput) {
+    pcInput.onmidimessage = null;
+    pcInput = null;
+  }
+  if (!id || !midiAccess || !pcCfg.enabled) {
+    if (!pcCfg.enabled) setPcStatus("Program Change follow off");
+    return;
+  }
+  const inp = midiAccess.inputs.get(id);
+  if (!inp) {
+    setPcStatus("MIDI device unavailable");
+    return;
+  }
+  pcInput = inp;
+  pcInput.onmidimessage = onPcMessage;
+  setPcStatus(`Following PC on ${inp.name || "MIDI"} · now ${patternKey()}`);
+}
+
+function onPcMessage(ev) {
+  const [status, d1] = ev.data;
+  if ((status & 0xf0) !== 0xc0) return; // program change only
+  if (!pcCfg.enabled) return;
+  const p = d1 & 0x7f;
+  const bank = Math.floor(p / PATTERNS_PER_BANK) % PATTERN_BANKS;
+  const num = p % PATTERNS_PER_BANK;
+  setPattern(bank, num, { toast: false });
+  setPcStatus(`PC ${p} → ${patternKey()}`);
 }
 
 function onMidiMessage(ev) {
@@ -1055,6 +1264,28 @@ function midiApplyRelative(step) {
 
 el.midiInput.addEventListener("change", () => connectMidiInput(el.midiInput.value));
 
+el.pcInput.addEventListener("change", () => {
+  pcCfg.inputId = el.pcInput.value || null;
+  savePcCfg();
+  connectPcInput(pcCfg.inputId);
+});
+
+el.pcFollow.addEventListener("change", () => {
+  pcCfg.enabled = el.pcFollow.checked;
+  savePcCfg();
+  if (pcCfg.enabled) {
+    if (!navigator.requestMIDIAccess) {
+      setPcStatus("Web MIDI not supported — select pattern manually");
+    } else if (pcCfg.inputId) {
+      connectPcInput(pcCfg.inputId);
+    } else {
+      setPcStatus("Select the device's MIDI input above");
+    }
+  } else {
+    connectPcInput(null);
+  }
+});
+
 el.midiMode.addEventListener("change", () => {
   midiCfg.mode = el.midiMode.value;
   saveMidiCfg();
@@ -1083,6 +1314,7 @@ el.midiLearn.addEventListener("click", () => {
 // Boot
 // ---------------------------------------------------------------------------
 
+restorePatternSel();
 load();
 renderAll();
 initialParams();

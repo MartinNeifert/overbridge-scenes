@@ -19,6 +19,27 @@
     </div>
   </header>
 
+  <!-- Pattern selector: scenes are stored per pattern (4 scenes each) -->
+  <section class="sc-pattern-bar">
+    <div class="sc-pattern-group">
+      <span class="sc-picker-label">Pattern</span>
+      <select id="sc-pattern-bank" aria-label="Pattern bank" title="Pattern bank (A–P)"></select>
+      <select id="sc-pattern-num" aria-label="Pattern number" title="Pattern number (1–16)"></select>
+      <span class="sc-pattern-id" id="sc-pattern-id" title="Current pattern">A01</span>
+    </div>
+    <div class="sc-pattern-follow">
+      <label class="sc-pattern-toggle" title="Auto-switch the active pattern when the device sends a MIDI Program Change">
+        <input type="checkbox" id="sc-pc-follow" />
+        <span>Follow Program Change</span>
+      </label>
+      <select id="sc-pc-input" aria-label="MIDI input for program change"
+        title="MIDI input carrying the device's Program Change (select the Digitakt port)">
+        <option value="">Off</option>
+      </select>
+      <span class="sc-hint" id="sc-pc-status">4 scenes are saved per pattern</span>
+    </div>
+  </section>
+
   <!-- Crossfader -->
   <section class="sc-crossfader-panel">
     <div class="sc-xf-assign">

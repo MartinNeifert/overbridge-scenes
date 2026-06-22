@@ -50,8 +50,9 @@ xfader = { a: sceneId | null, b: sceneId | null, pos: 0..1 }
   plugin switch the indices are re-resolved by `id` then `name`, so scenes
   survive index shifts and stale params are dropped.
 
-Persistence is `localStorage`, keyed `ob-scenes:v1:<plugin>`, so each plugin
-(Digitakt vs Analog Heat) keeps its own scenes and A/B assignment.
+Persistence is `localStorage`, keyed `ob-scenes:v1:<plugin>:<pattern>`, so each
+plugin (Digitakt vs Analog Heat) **and each pattern** keeps its own scenes and
+A/B assignment. See [Per-pattern scenes](#per-pattern-scenes) below.
 
 ## Morph semantics
 
@@ -91,6 +92,43 @@ back and forth is stable and reversible.
 4. Per-row slider fine-tunes the stored value; **✕** removes it.
 5. **Recall** applies a whole scene immediately, independent of the crossfader.
 
+## Per-pattern scenes
+
+On the Digitakt each **pattern** has its own sound, so scenes are namespaced per
+pattern: every pattern keeps an independent set of 4 scenes (`localStorage` key
+`ob-scenes:v1:<plugin>:<pattern>`). The active pattern is chosen in the **Pattern**
+bar (bank `A–P` × number `1–16`); switching it saves the current pattern's scenes
+and loads the target's. Pre-pattern scenes are migrated once into pattern `A01`.
+
+### Can the active pattern be read from the VST? (investigation)
+
+**No.** Empirically, the Digitakt Overbridge VST3 exposes **2711 parameters** —
+all sound-engine, FX, per-track, and MIDI params. None is a pattern/program
+selector:
+
+- The only params matching "pattern" are per-track `T1..T8 Pattern Mute` toggles
+  and `FX Master Pattern Volume` — not the pattern *index*.
+- There is no `Program`, `Bank`, or `Pattern Select` parameter.
+- Switching patterns on the device mutates the `IComponent::getState` blob (see
+  `overbridge-param-sync.md`), but that fires **no callback** and only signals
+  *"something changed"* — it cannot identify *which* pattern.
+
+So the pattern index is not available through the VST3 parameter/state surface.
+
+### How the active pattern is obtained
+
+1. **Manual** — the Pattern bar (always works, no MIDI needed).
+2. **MIDI Program Change follow** — the only live device signal of the pattern.
+   Elektron devices send a Program Change (0–127) when the pattern changes (with
+   *Program Change Send* enabled on the device). It is decoded as
+   `bank = ⌊pc / 16⌋`, `number = pc mod 16` (PC 0 → A01, PC 16 → B01, …,
+   PC 127 → H16) and auto-switches the active pattern. This reuses the page's
+   Web MIDI access; point the **Follow Program Change** input at the device's
+   MIDI port. Banks beyond H are reachable manually.
+
+Both paths share one `setPattern()`, so manual and MIDI-driven switches behave
+identically. No Rust/backend change was required.
+
 ## Performance
 
 Crossfader drags can touch many parameters per frame. Writes are coalesced into a
@@ -103,8 +141,10 @@ value hasn't changed beyond a small epsilon. They are sent over the WebSocket
 - Scenes live in the browser. A future enhancement could persist them host-side
   (per plugin) via a small `/api/scenes` endpoint so they're shared across
   machines and survive a cleared browser cache.
-- The crossfader can be driven by the UI today; binding it to a MIDI CC (so a
-  hardware fader morphs scenes) would be a natural follow-up via the existing
-  MIDI mapper.
+- The crossfader can be driven by a MIDI controller (absolute fader or endless
+  encoder) via Web MIDI — see the **MIDI** row on the scenes page.
+- Pattern follow relies on the device's *Program Change Send*; if that's off, use
+  the manual Pattern bar. Banks beyond H aren't reachable by Program Change alone
+  (would need Bank Select CC) but are always available manually.
 - Morph is linear; per-parameter curves (log/exp) could be added like the MIDI
   mapper's `curve` field.
