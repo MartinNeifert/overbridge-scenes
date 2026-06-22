@@ -1,0 +1,85 @@
+/* Shared global header: device selector + connection status pill.
+ *
+ * Used by both the classic surface and the scenes surface. Relies on the CSS
+ * custom properties (--bg, --border, --text, --muted, --success, --warn,
+ * --radius) that both page stylesheets define on :root. */
+
+.obdh {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.obdh-select-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 260px;
+}
+
+.obdh-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.obdh-select {
+  flex: 1;
+  min-width: 200px;
+  padding: 0.45rem 0.65rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.obdh-select:disabled {
+  opacity: 0.6;
+}
+
+/* Status pill. The leading dot ("token") and text share currentColor, so the
+ * whole indicator turns green only when a device is actually connected. */
+.obdh-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  background: var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.obdh-status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.obdh-status.connected {
+  background: #1a3d2e;
+  color: var(--success);
+}
+
+.obdh-status.warn {
+  background: #3d331a;
+  color: var(--warn);
+}
+
+.obdh-status.error {
+  background: #3d1a1a;
+  color: #ff6b6b;
+}
+
+.obdh-status.idle {
+  background: var(--border);
+  color: var(--muted);
+}

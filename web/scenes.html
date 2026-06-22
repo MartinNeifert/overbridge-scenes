@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scenes &amp; Crossfader — Overbridge Host</title>
+  <link rel="stylesheet" href="scenes.css" />
+  <link rel="stylesheet" href="device-header.css" />
+</head>
+<body>
+  <header class="sc-header">
+    <div class="sc-title">
+      <h1>Scenes <span class="sc-amp">&amp;</span> Crossfader</h1>
+      <p class="sc-sub">Octatrack-style scenes for Overbridge devices</p>
+    </div>
+    <div class="sc-header-right">
+      <div id="ob-device-header"></div>
+      <a class="sc-link" href="/">Classic control surface →</a>
+    </div>
+  </header>
+
+  <!-- Crossfader -->
+  <section class="sc-crossfader-panel">
+    <div class="sc-xf-assign">
+      <label class="sc-assign sc-assign-a">
+        <span class="sc-assign-label">Scene A <em>(left)</em></span>
+        <select id="sc-assign-a" aria-label="Assign scene A"></select>
+      </label>
+
+      <div class="sc-xf-readout">
+        <div id="sc-xf-percent" class="sc-xf-percent">A · 0%</div>
+        <div class="sc-xf-jumprow">
+          <button id="sc-jump-a" class="sc-btn sc-btn-ghost" title="Snap crossfader fully to Scene A">⟵ A</button>
+          <button id="sc-jump-center" class="sc-btn sc-btn-ghost" title="Center crossfader">·</button>
+          <button id="sc-jump-b" class="sc-btn sc-btn-ghost" title="Snap crossfader fully to Scene B">B ⟶</button>
+        </div>
+      </div>
+
+      <label class="sc-assign sc-assign-b">
+        <span class="sc-assign-label">Scene B <em>(right)</em></span>
+        <select id="sc-assign-b" aria-label="Assign scene B"></select>
+      </label>
+    </div>
+
+    <div class="sc-xf-track">
+      <span class="sc-xf-name sc-xf-name-a" id="sc-xf-name-a" title="Scene A">Baseline</span>
+      <input type="range" id="sc-crossfader" min="0" max="1000" step="1" value="0" aria-label="Crossfader" />
+      <span class="sc-xf-name sc-xf-name-b" id="sc-xf-name-b" title="Scene B">Baseline</span>
+    </div>
+
+    <div class="sc-xf-footer">
+      <div class="sc-xf-base">
+        <button id="sc-capture-base" class="sc-btn sc-btn-ghost" title="Snapshot current live values as the neutral baseline used when one side is empty">Capture baseline</button>
+        <span class="sc-hint" id="sc-base-hint">Baseline = live values when A/B were assigned. Empty side morphs toward baseline.</span>
+      </div>
+      <div class="sc-xf-takeover">
+        <span class="sc-picker-label">Takeover</span>
+        <select id="sc-slider-mode" aria-label="Crossfader takeover mode"
+          title="How the crossfader reconciles with the live (knob-changed) values when you grab it">
+          <option value="jump">Jump</option>
+          <option value="pickup">Pickup</option>
+          <option value="scale">Scale</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="sc-xf-midi" id="sc-midi">
+      <span class="sc-picker-label">MIDI</span>
+      <select id="sc-midi-input" aria-label="MIDI input device for the crossfader"
+        title="Choose the MIDI input that controls the crossfader">
+        <option value="">Off</option>
+      </select>
+      <select id="sc-midi-mode" aria-label="MIDI controller type"
+        title="Absolute: standard 0–127 fader/knob. Relative: endless/infinite encoder">
+        <option value="absolute">Absolute (0–127)</option>
+        <option value="rel-signed">Encoder · signed</option>
+        <option value="rel-offset">Encoder · offset</option>
+      </select>
+      <label class="sc-midi-sens" title="How far each encoder tick moves the crossfader">
+        <span class="sc-picker-label">Step</span>
+        <input type="number" id="sc-midi-step" min="0.001" max="1" step="0.005" value="0.02" />
+      </label>
+      <button id="sc-midi-learn" class="sc-btn sc-btn-ghost"
+        title="Click, then move the controller to map it to the crossfader">Learn</button>
+      <span class="sc-hint" id="sc-midi-status">MIDI off</span>
+    </div>
+  </section>
+
+  <!-- Scene cards -->
+  <main class="sc-scenes" id="sc-scenes"></main>
+
+  <!-- Parameter picker -->
+  <section class="sc-picker">
+    <div class="sc-picker-head">
+      <span class="sc-picker-label">Add parameters to</span>
+      <select id="sc-active-scene" aria-label="Scene to edit"></select>
+      <input type="search" id="sc-param-search" placeholder="Search parameters to map (e.g. Filter Cutoff)…" autocomplete="off" />
+    </div>
+    <div id="sc-param-results" class="sc-param-results"></div>
+  </section>
+
+  <footer class="sc-footer">
+    <p class="sc-hint">
+      Workflow: pick a scene above, search a parameter and click <strong>＋</strong> to capture its current value.
+      Turn a knob on the hardware, then hit <strong>Map</strong> on that row to re-snapshot the live value.
+      Assign two scenes to <strong>A</strong>/<strong>B</strong> and drag the crossfader to morph between them.
+    </p>
+  </footer>
+
+  <script src="device-header.js"></script>
+  <script src="scenes.js"></script>
+</body>
+</html>

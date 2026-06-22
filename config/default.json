@@ -1,0 +1,12 @@
+{
+  "api_port": 7780,
+  "plugin_dir": "plugins",
+  "default_plugin": "Digitakt",
+  "sample_rate": 48000,
+  "block_size": 128,
+  "overbridge_engine": "/Applications/Elektron/Overbridge Engine.app",
+  "midi": {
+    "enabled": true,
+    "virtual_port_name": "Overbridge Host Control"
+  }
+}

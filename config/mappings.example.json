@@ -1,0 +1,27 @@
+{
+  "description": "Map external MIDI CC messages to Overbridge VST parameters by name",
+  "mappings": [
+    {
+      "source": { "type": "cc", "channel": 0, "controller": 1 },
+      "target": { "parameter": "Filter Cutoff", "curve": "linear" }
+    },
+    {
+      "source": { "type": "cc", "channel": 0, "controller": 2 },
+      "target": { "parameter": "Filter Resonance", "curve": "linear" }
+    },
+    {
+      "source": { "type": "cc", "channel": 0, "controller": 7 },
+      "target": { "parameter": "Track Level", "curve": "linear" }
+    }
+  ],
+  "macros": [
+    {
+      "name": "filter_sweep",
+      "description": "Simultaneously sweep cutoff and resonance",
+      "parameters": [
+        { "name": "Filter Cutoff", "weight": 1.0 },
+        { "name": "Filter Resonance", "weight": 0.3 }
+      ]
+    }
+  ]
+}

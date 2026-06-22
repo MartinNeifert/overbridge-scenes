@@ -1,0 +1,8 @@
+/target/
+/plugins/
+/vendor/*
+!/vendor/truce-rack-vst3/
+*.vst3/
+.DS_Store
+config/local.json
+config/mappings.local.json
