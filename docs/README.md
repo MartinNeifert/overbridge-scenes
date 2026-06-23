@@ -2,6 +2,14 @@
 
 Project documentation, organized by purpose.
 
+## Start here
+
+- [`../README.md`](../README.md) — feature overview and quick start.
+- [`architecture.md`](architecture.md) — layered architecture, run modes, CLI
+  flags, project layout, and development notes.
+- [`api-reference.md`](api-reference.md) — HTTP / WebSocket / MIDI control API,
+  physical-controller mapping, and client examples.
+
 ## Structure
 
 - **[`active-issues/`](active-issues/)** — open problems with enough context to pick up

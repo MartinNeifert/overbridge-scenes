@@ -12,9 +12,12 @@ async/audio, plus shared memory). We do **not** implement that protocol.
 
 | Path | Direction | Mechanism |
 |------|-----------|-----------|
-| Host → device | UI/MIDI → hardware | `set_parameter` → `IParameterChanges` in `process()` |
+| Host → device | UI/MIDI → hardware | `set_parameter` (on the caller thread, under the plugin lock) → `IParameterChanges` delivered by a host-driven `process()` |
 | Device → host (knobs) | hardware → UI | plugin calls `IComponentHandler::performEdit` |
 | Device → host (presets) | hardware preset → UI | **no callback** — see below |
+
+> Parameter writes apply on the calling HTTP/WS thread rather than the audio command channel;
+> see [`audio-and-control-api.md`](audio-and-control-api.md) for that decision.
 
 ## Empirical findings (verified live, via `vst_handler` logging)
 

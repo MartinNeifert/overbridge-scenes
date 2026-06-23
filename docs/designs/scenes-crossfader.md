@@ -15,25 +15,25 @@ but the feature is plugin-agnostic.
 - Easy authoring: turn a knob on the hardware, click **Map**, and the current
   live value is saved as that scene's value for that parameter.
 
-## Why a standalone UI, no backend changes
+## Mostly a standalone UI
 
-The existing host already exposes everything needed:
+The feature is almost entirely a new browser surface — `web/scenes.html`,
+`web/scenes.js`, `web/scenes.css` — served by the same static handler at
+`/scenes.html`. The classic surface (`/`, `web/app.js`, `web/style.css`) is
+untouched. It leans on what the host already exposes:
 
 - **Live values** — the WebSocket `parameters` / `param_updates` messages (and
   `GET /api/parameters` as a fallback) stream every parameter's current value,
   including hardware knob moves (see `overbridge-param-sync.md`).
-- **Writes** — the WebSocket accepts `{action:"set_parameter", index, value}`,
-  routed to the audio thread and applied to the VST3 parameter, then mirrored to
-  the device by Overbridge.
+- **Writes** — applied via the control API (see below).
 
-So Scenes is implemented purely as a new browser surface — `web/scenes.html`,
-`web/scenes.js`, `web/scenes.css` — served by the same static handler at
-`/scenes.html`. The classic surface (`/`, `web/app.js`, `web/style.css`) is
-untouched. This also keeps it working regardless of host platform, since no Rust
-code (which is macOS-only for the audio/VST layer) had to change.
-
-A scene write goes through the *same* command path as a manual edit, so the
-classic surface, MIDI mappings, and the hardware all see the morph live.
+The one backend addition is `POST /api/parameters/batch`, which applies many
+parameter updates under a single plugin lock and one `process()` pass. A morph
+frame can touch dozens of parameters; batching avoids per-parameter lock churn
+and delivers the whole frame to the device together. A scene write still goes
+through the *same* apply path as a manual edit, so the classic surface, MIDI
+mappings, and the hardware all see the morph live. See
+[`audio-and-control-api.md`](audio-and-control-api.md).
 
 ## Data model
 
@@ -48,11 +48,17 @@ xfader = { a: sceneId | null, b: sceneId | null, pos: 0..1 }
   what `set_parameter` expects.
 - Parameters are stored with `id` + `name` as well as `index`; on (re)connect or
   plugin switch the indices are re-resolved by `id` then `name`, so scenes
-  survive index shifts and stale params are dropped.
+  survive index shifts and stale params are dropped (`validateScenes`).
+- `validateScenes` runs on every full `parameters` broadcast (~2 s). It
+  **mutates the existing param objects in place** rather than rebuilding them, so
+  event-handler closures captured by the row sliders and **Map** buttons stay
+  valid across re-syncs. (Rebuilding them was a real bug: slider edits landed on
+  an orphaned object and silently did nothing.)
 
 Persistence is `localStorage`, keyed `ob-scenes:v1:<plugin>:<pattern>`, so each
-plugin (Digitakt vs Analog Heat) **and each pattern** keeps its own scenes and
-A/B assignment. See [Per-pattern scenes](#per-pattern-scenes) below.
+plugin (Digitakt vs Analog Heat) **and each pattern** keeps its own scenes, A/B
+assignment, and captured baseline. See [Per-pattern scenes](#per-pattern-scenes)
+below.
 
 ## Morph semantics
 
@@ -70,18 +76,29 @@ value(i)           = lerp(endpoint(A, i), endpoint(B, i), t)
   leave A `None`, slide right: "fade current values → scene". Reverse for A.
 - **Both `None`** → no-op.
 
-### Baseline
+### Baseline (per-pattern)
 
-`baseline[i]` is a snapshot of the live device values for the union parameters,
-captured when:
+The baseline is the neutral "home" value used for the empty side of a morph — a
+parameter only locked in one scene, or a side set to `— None —`. It is stored
+**per pattern**, alongside that pattern's scenes, and has two flavours:
 
-- an A/B assignment changes,
-- the user clicks **Capture baseline**, or
-- the crossfader is first touched while unarmed (e.g. after a page reload
-  restored assignments).
+- **Explicit** — the user clicks **Capture baseline (pattern)**. This snapshots
+  the live device values and marks the baseline `explicit`. The pattern now has a
+  fixed home that morphs resolve against, persisted in `localStorage`.
+- **Auto-seeded** — if a pattern has no explicit baseline yet, one is seeded
+  silently (`captureBaseline({ silent: true, explicit: false })`) so morphing has
+  something to interpolate toward. `ensureBaselineCoverage` extends it to any
+  parameters that later join a scene.
 
-It is deliberately *not* re-captured while morphing, so dragging the crossfader
-back and forth is stable and reversible.
+`baseValue(i)` prefers the stored baseline **only when it is explicit and covers
+`i`**; otherwise it falls back to the current live value. This is what stops a
+stale auto-seeded `0` from dominating a freshly turned-up knob (the earlier
+"slides back to 0 in jump mode" bug).
+
+When a crossfader **grab** begins, the empty-side value for each parameter is
+**frozen for the duration of that drag** (`emptySideValue`), so dragging back and
+forth is stable and reversible and doesn't chase live updates mid-gesture. The
+baseline itself is never re-captured while morphing.
 
 ## Authoring flow ("Map")
 
@@ -89,7 +106,9 @@ back and forth is stable and reversible.
 2. Search → **＋** adds a parameter, capturing its current live value.
 3. Turn the hardware knob → **⤓ Map** on the row re-snapshots the live value.
    **Snapshot live** does this for every parameter in the scene at once.
-4. Per-row slider fine-tunes the stored value; **✕** removes it.
+4. Per-row slider fine-tunes the **scene's stored value** — the target the
+   crossfader morphs toward. It edits scene state only and does **not** push to
+   the device (moving the crossfader is what applies it). **✕** removes the row.
 5. **Recall** applies a whole scene immediately, independent of the crossfader.
 
 ## Per-pattern scenes
@@ -133,8 +152,9 @@ identically. No Rust/backend change was required.
 
 Crossfader drags can touch many parameters per frame. Writes are coalesced into a
 per-`requestAnimationFrame` batch, de-duplicated per index, and dropped if the
-value hasn't changed beyond a small epsilon. They are sent over the WebSocket
-(lowest latency); if it's down, the code falls back to `POST /api/parameters/{i}`.
+value hasn't changed beyond a small epsilon. The frame is then sent as one
+`POST /api/parameters/batch` request, so the whole morph step is applied under a
+single plugin lock and one `process()` pass on the host.
 
 ## Limitations / future work
 
