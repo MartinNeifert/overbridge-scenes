@@ -1,0 +1,72 @@
+Overbridge Scenes
+Copyright (c) 2026 Martin Neifert
+
+This project is licensed under the MIT License. See LICENSE.
+
+================================================================================
+Third-party open-source components
+================================================================================
+
+This repository includes or depends on open-source software from third parties.
+When you distribute a binary built from this project, retain this NOTICE together
+with the MIT license text.
+
+Vendored in this repository
+---------------------------
+
+  truce-rack-vst3 (vendor/truce-rack-vst3/)
+    License: MIT OR Apache-2.0, at your option
+    Upstream: https://github.com/truce-audio/truce-rack
+    Community VST3 host bindings (vst3 crate). Does not include the Steinberg VST3 SDK.
+
+Rust dependencies (via Cargo)
+-----------------------------
+
+  Runtime dependencies are listed in Cargo.toml and Cargo.lock. Most are licensed
+  under MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, or similar permissive
+  terms compatible with MIT.
+
+  To generate a full license report on your machine:
+
+    cargo install cargo-license
+    cargo license --avoid-dev-deps --avoid-build-deps
+
+================================================================================
+Proprietary software NOT included
+================================================================================
+
+This repository does NOT include, and this license does NOT grant any rights to:
+
+  - Elektron Overbridge VST3 plugins
+  - Elektron Overbridge Engine
+  - Elektron device firmware or other Elektron software
+
+You must install Overbridge from Elektron and use it under the Elektron End User
+License Agreement: https://www.elektron.se/eula
+
+Setup scripts may copy plugins or Engine from paths on YOUR computer where you
+already installed them. That copy is your responsibility and must comply with
+Elektron's terms. Do not commit or redistribute those files.
+
+================================================================================
+Trademarks and affiliation
+================================================================================
+
+This project is an independent open-source tool. It is NOT affiliated with,
+endorsed by, or sponsored by Elektron Music Machines MAV AB or Steinberg Media
+Technologies GmbH.
+
+  - Elektron, Digitakt, Syntakt, Analog Heat, Analog Rytm, Overbridge, and
+    related product names are trademarks of Elektron Music Machines MAV AB.
+  - VST is a trademark of Steinberg Media Technologies GmbH.
+
+Product names are used only to describe compatibility with software and hardware
+the user may already own.
+
+================================================================================
+Host compatibility note
+================================================================================
+
+Elektron Overbridge plugins require a non-sandboxed VST3 host. ob-host runs as a
+normal macOS process (not App Sandbox). Compatibility with future Elektron or
+third-party software versions is not guaranteed.
