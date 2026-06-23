@@ -33,8 +33,10 @@ const liveByIndex = new Map(); // index -> snapshot
 
 let scenes = freshScenes(); // fixed 4 slots
 let crossfader = { a: null, b: null, pos: 0 }; // a/b = scene id | null, pos 0..1
-let baseline = new Map(); // index -> neutral value used when a side is empty
-let baselineArmed = false;
+let baseline = new Map(); // index -> pattern baseline value, used when a crossfader side has no scene / value
+let storedBaseline = null; // raw [{index,id,value}] from storage, awaiting resolution against live params
+let baselineResolved = false; // true once this pattern's baseline is loaded or auto-seeded
+let baselineExplicit = false; // true after Capture baseline — until then, live wins over auto-seed for empty sides
 let activeSceneId = "1"; // scene the picker adds to
 
 let ws = null;
@@ -181,7 +183,11 @@ function writeScenes() {
   try {
     localStorage.setItem(
       storeKey(),
-      JSON.stringify({ scenes, crossfader: { a: crossfader.a, b: crossfader.b } })
+      JSON.stringify({
+        scenes,
+        crossfader: { a: crossfader.a, b: crossfader.b },
+        baseline: { explicit: baselineExplicit, values: serializeBaseline() },
+      })
     );
   } catch (e) {
     console.warn("scene save failed", e);
@@ -205,7 +211,9 @@ function load() {
   scenes = freshScenes();
   crossfader = { a: null, b: null, pos: 0 };
   baseline = new Map();
-  baselineArmed = false;
+  storedBaseline = null;
+  baselineResolved = false;
+  baselineExplicit = false;
   try {
     let raw = localStorage.getItem(storeKey());
     // One-time migration: pre-pattern scenes land in the default pattern (A01).
@@ -244,6 +252,16 @@ function load() {
         crossfader.a = data.crossfader.a ?? null;
         crossfader.b = data.crossfader.b ?? null;
       }
+      if (data.baseline) {
+        if (Array.isArray(data.baseline)) {
+          // Legacy: bare array — treat as an intentional capture.
+          storedBaseline = data.baseline;
+          baselineExplicit = true;
+        } else if (Array.isArray(data.baseline.values)) {
+          storedBaseline = data.baseline.values;
+          baselineExplicit = !!data.baseline.explicit;
+        }
+      }
     }
   } catch (e) {
     console.warn("scene load failed", e);
@@ -252,7 +270,9 @@ function load() {
 }
 
 // Re-resolve stored param indices against the live parameter list (indices can
-// shift between plugins / versions; ids and names are more stable).
+// shift between plugins / versions; ids and names are more stable). Mutates the
+// existing param objects in place so event-handler closures (scene sliders,
+// Map buttons) that captured them stay valid across periodic re-syncs.
 function validateScenes() {
   const byId = new Map();
   const byName = new Map();
@@ -261,16 +281,20 @@ function validateScenes() {
     byName.set(p.name.toLowerCase(), p);
   }
   for (const scene of scenes) {
-    scene.params = scene.params
-      .map((sp) => {
-        let live = sp.id != null ? byId.get(sp.id) : undefined;
-        if (!live && sp.name) live = byName.get(sp.name.toLowerCase());
-        if (!live && liveByIndex.has(sp.index)) live = liveByIndex.get(sp.index);
-        if (!live) return null;
-        return { index: live.index, id: live.id, name: live.name, value: sp.value };
-      })
-      .filter(Boolean);
+    const resolved = [];
+    for (const sp of scene.params) {
+      let live = sp.id != null ? byId.get(sp.id) : undefined;
+      if (!live && sp.name) live = byName.get(sp.name.toLowerCase());
+      if (!live && liveByIndex.has(sp.index)) live = liveByIndex.get(sp.index);
+      if (!live) continue;
+      sp.index = live.index;
+      sp.id = live.id;
+      sp.name = live.name;
+      resolved.push(sp); // keep the same object — preserves closure identity
+    }
+    scene.params = resolved;
   }
+  resolveBaseline();
 }
 
 // ---------------------------------------------------------------------------
@@ -355,27 +379,117 @@ function unionIndices() {
 }
 
 function baseValue(index) {
-  if (baseline.has(index)) return baseline.get(index);
+  // Explicit baseline = user clicked Capture (or loaded a saved explicit capture).
+  // Auto-seeded baselines are NOT authoritative — prefer the current live reading
+  // so a hardware knob turn isn't overridden by a stale snapshot taken at load.
+  if (baselineExplicit && baseline.has(index)) return baseline.get(index);
   const lv = liveValue(index);
-  return lv !== undefined ? lv : 0;
+  if (lv !== undefined) return lv;
+  if (baseline.has(index)) return baseline.get(index);
+  return 0;
 }
 
-// Endpoint value for one side: explicit scene lock wins, otherwise neutral base.
+// Endpoint value for one side: explicit scene lock wins, otherwise the neutral
+// "empty side" value (explicit baseline, frozen grab value, or live).
 function endpointValue(scene, index) {
   if (scene) {
     const p = scene.params.find((x) => x.index === index);
     if (p) return p.value;
   }
-  return baseValue(index);
+  return emptySideValue(index);
 }
 
-function captureBaseline() {
-  baseline = new Map();
-  for (const index of unionIndices()) {
-    const lv = liveValue(index);
-    baseline.set(index, lv !== undefined ? lv : endpointValue(sceneById(crossfader.a), index));
+// Value used for a crossfader side with no scene (or no value for this param).
+// Priority: an explicitly-captured pattern baseline → the live value frozen at
+// the moment the fader was grabbed (so the morph is a stable line and doesn't
+// drift as the device echoes our writes back) → the current live value → 0.
+function emptySideValue(index) {
+  if (baselineExplicit && baseline.has(index)) return baseline.get(index);
+  if (xfGrab && xfGrab.per.has(index)) return xfGrab.per.get(index).v0;
+  const lv = liveValue(index);
+  if (lv !== undefined) return lv;
+  if (baseline.has(index)) return baseline.get(index);
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Pattern baseline — the neutral "home" snapshot used for any crossfader
+// endpoint that has no scene assigned (None) or whose scene doesn't define a
+// given parameter. Captured explicitly (button) or auto-seeded from the live
+// snapshot the first time a pattern is opened, and persisted per pattern.
+// ---------------------------------------------------------------------------
+
+// Every parameter mapped in any of this pattern's 4 scenes — the only params the
+// crossfader can morph, hence the only ones the baseline needs to cover.
+function baselineParamIndices() {
+  const set = new Set();
+  for (const s of scenes) for (const p of s.params) set.add(p.index);
+  return [...set];
+}
+
+function serializeBaseline() {
+  const arr = [];
+  for (const [index, value] of baseline) {
+    const p = liveByIndex.get(index);
+    arr.push({ index, id: p ? p.id : null, value });
   }
-  baselineArmed = true;
+  return arr;
+}
+
+// Snapshot the current live values of every mapped param as this pattern's
+// baseline, then persist. `silent` suppresses the toast (auto-seed on load).
+// `explicit: true` only from the Capture button — marks the baseline as the
+// intentional "home" for empty crossfader sides (overrides live readings).
+function captureBaseline(opts = {}) {
+  baseline = new Map();
+  for (const index of baselineParamIndices()) {
+    const lv = liveValue(index);
+    if (lv !== undefined) baseline.set(index, lv);
+  }
+  baselineResolved = true;
+  baselineExplicit = !!opts.explicit;
+  writeScenes();
+  if (!opts.silent) toast(`Baseline captured for ${patternKey()}`);
+}
+
+// Seed a baseline value for any newly-mapped param from the current live
+// snapshot, leaving existing baseline values untouched — keeps the baseline
+// complete as scenes gain params without clobbering a captured home state.
+function ensureBaselineCoverage() {
+  let added = false;
+  for (const index of baselineParamIndices()) {
+    if (!baseline.has(index)) {
+      const lv = liveValue(index);
+      if (lv !== undefined) {
+        baseline.set(index, lv);
+        added = true;
+      }
+    }
+  }
+  if (added) writeScenes();
+}
+
+// Resolve the stored per-pattern baseline against the live parameter list once
+// it's available; if none was ever saved for this pattern, auto-seed from the
+// current snapshot. Runs from validateScenes whenever live params arrive.
+function resolveBaseline() {
+  if (!liveParams.length) return;
+  if (storedBaseline) {
+    const byId = new Map(liveParams.map((p) => [p.id, p]));
+    baseline = new Map();
+    for (const b of storedBaseline) {
+      let live = b.id != null ? byId.get(b.id) : null;
+      if (!live && liveByIndex.has(b.index)) live = liveByIndex.get(b.index);
+      if (live && Number.isFinite(b.value)) baseline.set(live.index, b.value);
+    }
+    storedBaseline = null;
+    baselineResolved = true;
+  }
+  if (!baselineResolved) {
+    captureBaseline({ silent: true, explicit: false }); // first open → seed, live still wins
+  } else {
+    ensureBaselineCoverage();
+  }
 }
 
 // Captured when the crossfader is grabbed. Records each param's live value at
@@ -384,7 +498,6 @@ function captureBaseline() {
 // trajectory (A→B) must stay fixed so Pickup has a path to sweep through the
 // live value and Scale has real endpoints to land on.
 function beginXfGrab() {
-  if (!baselineArmed) captureBaseline();
   const per = new Map();
   for (const index of unionIndices()) {
     const lv = liveValue(index);
@@ -405,9 +518,8 @@ function applyCrossfade() {
   const b = sceneById(crossfader.b);
   if (!a && !b) return;
   const t = crossfader.pos;
-  // Modes only apply during a live grab; programmatic moves (jump buttons,
-  // assignment changes) snap straight to the morph.
-  const mode = xfGrab ? sliderMode : "jump";
+  // Jump = pure morph between endpoints. Pickup/Scale only during a live grab.
+  const mode = xfGrab && sliderMode !== "jump" ? sliderMode : "jump";
   const t0 = xfGrab ? xfGrab.t0 : 0;
 
   for (const index of unionIndices()) {
@@ -479,8 +591,6 @@ function flushApply() {
   if (pendingApply.size === 0) return;
   const updates = [];
   for (const [index, value] of pendingApply) {
-    const p = liveByIndex.get(index);
-    if (p) p.value = value;
     updates.push({ index, value });
   }
   pendingApply.clear();
@@ -648,10 +758,11 @@ function renderParamRow(scene, p) {
   const slider = row.querySelector('input[type="range"]');
   const valEl = row.querySelector("[data-val]");
 
-  // A scene-row slider just edits this scene's stored value. (Soft takeover —
-  // Jump/Pickup/Scale — lives on the crossfader, not here.) We only guard
-  // against the periodic full-sync rebuilding the row mid-drag, which would
-  // otherwise reset the thumb under the user's finger.
+  // A scene-row slider edits this scene's stored value AND auditions it live:
+  // dragging pushes the parameter straight to the device so you can dial the
+  // scene in by ear. This is a direct edit, independent of the crossfader morph
+  // (the morph only runs when you move the fader). We guard against the periodic
+  // full-sync rebuilding the row mid-drag, which would reset the thumb.
   let dragging = false;
   function beginDrag() {
     if (dragging) return;
@@ -670,10 +781,14 @@ function renderParamRow(scene, p) {
 
   slider.addEventListener("input", () => {
     const t = Number(slider.value) / 1000;
-    p.value = min + t * (max - min);
-    valEl.textContent = `= ${fmt(p.value)}`;
+    // Edit the CURRENT scene param object (not the closed-over one, which a
+    // periodic validateScenes() rebuild may have replaced) so the value sticks.
+    const target = scene.params.find((x) => x.index === p.index) || p;
+    target.value = min + t * (max - min);
+    valEl.textContent = `= ${fmt(target.value)}`;
     save();
-    reapplyIfAssigned(scene);
+    // Scene-state only: this sets the value the top crossfader morphs toward.
+    // It must NOT touch the device — moving the fader applies it.
   });
 
   row.querySelector("[data-map]").addEventListener("click", () => {
@@ -809,8 +924,8 @@ function afterSceneMutation() {
   renderAssign();
   renderScenes();
   renderResults();
+  ensureBaselineCoverage();
   if (crossfader.a || crossfader.b) {
-    captureBaseline();
     applyCrossfade();
   }
 }
@@ -826,7 +941,7 @@ function reapplyIfAssigned(scene) {
 el.assignA.addEventListener("change", () => {
   crossfader.a = el.assignA.value || null;
   save();
-  captureBaseline();
+  ensureBaselineCoverage();
   renderScenes();
   renderCrossfaderReadout();
   applyCrossfade();
@@ -835,7 +950,7 @@ el.assignA.addEventListener("change", () => {
 el.assignB.addEventListener("change", () => {
   crossfader.b = el.assignB.value || null;
   save();
-  captureBaseline();
+  ensureBaselineCoverage();
   renderScenes();
   renderCrossfaderReadout();
   applyCrossfade();
@@ -857,7 +972,6 @@ el.crossfader.addEventListener("input", () => {
 function jumpTo(pos) {
   // Jump buttons always snap, regardless of the selected takeover mode.
   endXfGrab();
-  if (!baselineArmed) captureBaseline();
   crossfader.pos = pos;
   renderCrossfaderReadout();
   applyCrossfade();
@@ -868,8 +982,7 @@ el.jumpCenter.addEventListener("click", () => jumpTo(0.5));
 el.jumpB.addEventListener("click", () => jumpTo(1));
 
 el.captureBase.addEventListener("click", () => {
-  captureBaseline();
-  toast("Baseline captured from live");
+  captureBaseline({ explicit: true });
 });
 
 el.activeScene.addEventListener("change", () => {

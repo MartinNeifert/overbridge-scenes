@@ -9,7 +9,9 @@ use futures_util::{SinkExt, StreamExt};
 use std::path::PathBuf;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
+use axum::http::{header, HeaderValue};
 
 use crate::devices;
 use crate::host::ParameterSnapshot;
@@ -39,6 +41,12 @@ pub fn router(state: SharedState, web_dir: PathBuf) -> Router {
     Router::new()
         .merge(api)
         .fallback_service(ServeDir::new(web_dir))
+        // Web assets change between runs; tell browsers to always revalidate so
+        // a rebuilt scenes.js/html is never served from a stale disk cache.
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-cache, no-store, must-revalidate"),
+        ))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
 }
