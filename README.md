@@ -100,6 +100,73 @@ machine — all gitignored.
 
 ---
 
+## Audio routing (experimental)
+
+> **Not performance-ready.** This is a control-plane prototype. Expect occasional
+> clicks, dropouts, or rough edges on the audio path — especially while parameters
+> are changing quickly, the crossfader is moving, or the plugin is syncing state.
+> Do not rely on it for live shows, recording, or critical listening yet.
+
+The web UI and API are the main product. Audio exists so the Overbridge plugin can
+stay connected and push parameter/MIDI changes to the hardware — the same reason
+a DAW keeps the plugin loaded, not because this is a finished audio driver.
+
+### Signal path (high level)
+
+```text
+  Web UI / HTTP / WebSocket / MIDI
+              │
+              ▼
+         ob-host (VST3 host)
+              │
+              ▼
+    Elektron Overbridge VST3 plugin  ──►  Overbridge Engine  ──USB──►  device
+              │
+              ▼
+    CoreAudio duplex on the Elektron device (default mode)
+```
+
+### Default: duplex + monitoring
+
+Out of the box, `ob-host` opens the Elektron as a **single CoreAudio duplex**
+device (one clock, one driver — similar to selecting it as input *and* output in
+a DAW):
+
+| Path | What it does |
+|------|----------------|
+| **Control** | The VST3 plugin + Engine carry parameter and MIDI changes to the box. |
+| **What you hear** | While connected, the device's **Main Out plays the USB return**. We copy the device's own input (Main L/R by default) back to that output so you still hear the internal mix — DAW-style monitoring, not the VST's audio bus. |
+| **Why `process()` runs** | Keeps the plugin alive and the Overbridge link happy; it is not a polished low-latency performance pipeline. |
+
+Tunable in `config/default.json`: `duplex.device`, `duplex.monitor`,
+`duplex.monitor_source`, `duplex.monitor_gain`.
+
+### If you only want control (no host audio path)
+
+```bash
+RUST_LOG=info ./target/release/ob-host --plugin Digitakt --control-only
+```
+
+The host never opens the device audio stream. The hardware runs its own audio
+untouched; you still get scenes, crossfader, and API control. Useful when glitches
+on the monitor path are getting in the way.
+
+### Known rough edges
+
+- Real-time safety is best-effort: the audio callback uses `try_lock()` on the
+  plugin; heavy param sync or editor work can still cause **lock-skips** and brief
+  artifacts on the monitor path.
+- Parameter sync and crossfader morphs share the same plugin — fast morphs can
+  interact with [param-sync jitter](docs/active-issues/jitter-on-param-sync.md).
+- Duplex monitoring has had [click/dropout issues](docs/active-issues/audio-artifacts-duplex-monitoring.md)
+  that are largely mitigated but not “DAW-grade” yet.
+
+More detail: [`docs/architecture.md`](docs/architecture.md) ·
+[`docs/designs/audio-cutout-and-duplex-fix.md`](docs/designs/audio-cutout-and-duplex-fix.md) ·
+[`docs/designs/audio-routing-and-control-options.md`](docs/designs/audio-routing-and-control-options.md)
+
+---
+
 ## Quick start
 
 ```bash
@@ -198,23 +265,4 @@ Index: [`docs/README.md`](docs/README.md).
 
 ## License
 
-**Overbridge Scenes** is licensed under the [MIT License](LICENSE).
-
-See [NOTICE](NOTICE) for third-party attributions, trademark disclaimers, and what
-is **not** included in this repository.
-
-| | |
-|-|-|
-| **This repo (MIT)** | Host, web UI, scripts, documentation |
-| **Vendored** | [`truce-rack-vst3`](vendor/truce-rack-vst3/) — MIT or Apache-2.0 |
-| **You install separately** | Elektron Overbridge VST3 plugins · Overbridge Engine ([EULA](https://www.elektron.se/eula)) |
-
-This project is **not affiliated with Elektron** or Steinberg. Product names
-(Digitakt, Overbridge, VST, etc.) describe compatibility only.
-
-To audit dependency licenses after building:
-
-```bash
-cargo install cargo-license
-cargo license --avoid-dev-deps --avoid-build-deps
-```
+[MIT License](LICENSE). Not affiliated with Elektron.
