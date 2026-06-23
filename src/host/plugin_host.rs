@@ -34,7 +34,6 @@ pub struct ParameterSnapshot {
 /// Commands sent from the API/MIDI threads to the audio host thread.
 #[derive(Debug, Clone)]
 pub enum HostCommand {
-    SetParameter { index: usize, value: f64 },
     SetParameterByName { name: String, value: f64 },
     SendMidiNote { channel: u8, note: u8, velocity: u8, on: bool },
     SendMidiCc { channel: u8, controller: u8, value: u8 },

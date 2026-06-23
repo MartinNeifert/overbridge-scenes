@@ -1051,12 +1051,6 @@ pub(crate) fn apply_command(
     param_flush: &Sender<()>,
 ) {
     match cmd {
-        HostCommand::SetParameter { index, value } => {
-            if plugin.set_parameter(index, value).is_ok() {
-                update_param_snapshot(plugin, parameters, index);
-                let _ = param_flush.try_send(());
-            }
-        }
         HostCommand::SetParameterByName { name, value } => {
             let idx = parameters
                 .read()

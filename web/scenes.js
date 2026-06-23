@@ -40,7 +40,6 @@ let activeSceneId = "1"; // scene the picker adds to
 let ws = null;
 const pendingApply = new Map(); // index -> value, flushed on rAF
 let flushScheduled = false;
-const lastSent = new Map(); // index -> last value we sent (dedupe)
 let activeSliderDrag = 0; // >0 while a scene slider is held — blocks row rebuild
 
 // Soft-takeover anchor for the crossfader, captured when you grab the fader.
@@ -480,7 +479,6 @@ function flushApply() {
   if (pendingApply.size === 0) return;
   const updates = [];
   for (const [index, value] of pendingApply) {
-    lastSent.set(index, value);
     const p = liveByIndex.get(index);
     if (p) p.value = value;
     updates.push({ index, value });
