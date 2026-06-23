@@ -15,6 +15,23 @@ const VALUE_EPSILON: f64 = 1e-5;
 
 pub type ParamWsUpdate = (usize, f64, String);
 
+/// Refresh one entry in the host parameter cache from the plugin.
+pub fn update_param_snapshot(
+    plugin: &Vst3Plugin,
+    parameters: &Arc<RwLock<Vec<ParameterSnapshot>>>,
+    index: usize,
+) {
+    let mut params = parameters.write();
+    if let Some(snap) = params.get_mut(index) {
+        if let Ok(value) = plugin.parameter_value(index) {
+            snap.value = value;
+            snap.display = plugin
+                .parameter_value_string(index, value)
+                .unwrap_or_else(|_| format!("{value:.4}"));
+        }
+    }
+}
+
 /// Hash of `IComponent::getState` — preset/settings loads change this blob.
 pub fn plugin_state_fingerprint(plugin: &Vst3Plugin) -> Option<u64> {
     let component = plugin.save_state().ok()?;

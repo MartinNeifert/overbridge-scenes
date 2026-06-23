@@ -578,6 +578,13 @@ pub struct Vst3Plugin {
     /// across all buses. The device's audio (plugin output) is discarded here —
     /// we process only to keep the Overbridge Engine's stream alive.
     process_scratch: Vec<Vec<f32>>,
+
+    /// Cached from `activate()` for host-driven `process()` passes that deliver
+    /// `IParameterChanges` to the hardware without the audio thread.
+    active_sample_rate: f64,
+    active_max_block: usize,
+    /// Advancing transport sample counter for host-driven `process()` passes.
+    play_samples: i64,
 }
 
 impl Vst3Plugin {
@@ -714,7 +721,56 @@ impl Vst3Plugin {
             input_bus_channels: Vec::new(),
             output_bus_channels: Vec::new(),
             process_scratch: Vec::new(),
+            active_sample_rate: 48_000.0,
+            active_max_block: 128,
+            play_samples: 0,
         })
+    }
+
+    /// Run one `process()` block so queued `IParameterChanges` reach the
+    /// Overbridge hardware. `setParamNormalized` alone is not enough — see
+    /// `overbridge-param-sync.md`. Safe to call from the HTTP/WS thread while
+    /// holding the plugin lock.
+    pub fn deliver_pending_via_process(&mut self) -> Result<()> {
+        if !self.processing {
+            return Ok(());
+        }
+        use truce_rack_core::buffer::{AudioBuffer, BusRange};
+        use truce_rack_core::events::EventList;
+        use truce_rack_core::plugin::{Plugin, ProcessContext};
+        use truce_rack_core::transport::TransportInfo;
+
+        let frames = self.active_max_block;
+        let dummy_in = vec![0.0f32; frames];
+        let mut dummy_out = vec![0.0f32; frames];
+        let inputs = [&dummy_in[..]];
+        let mut outputs = [&mut dummy_out[..]];
+        let bus_in = [BusRange::new(0, 1)];
+        let bus_out = [BusRange::new(0, 1)];
+        let mut buffer = AudioBuffer::new(&inputs, &mut outputs, frames, &bus_in, &bus_out);
+
+        let beats = (self.play_samples as f64 / self.active_sample_rate) * (120.0 / 60.0);
+        let transport = TransportInfo {
+            tempo_bpm: Some(120.0),
+            time_signature: Some((4, 4)),
+            song_position_beats: Some(beats),
+            song_position_samples: Some(self.play_samples),
+            bar_start_beats: Some(0.0),
+            playing: true,
+            recording: false,
+            loop_active: false,
+        };
+        self.play_samples += frames as i64;
+
+        let mut out_events = EventList::default();
+        let mut ctx = ProcessContext {
+            sample_rate: self.active_sample_rate,
+            max_block_size: self.active_max_block,
+            transport: Some(transport),
+            output_events: &mut out_events,
+        };
+        let _ = Plugin::process(self, &mut buffer, &EventList::default(), &mut ctx)?;
+        Ok(())
     }
 }
 
@@ -1102,6 +1158,9 @@ impl PluginCore for Vst3Plugin {
             .collect();
         self.input_bus_channels = input_channels;
         self.output_bus_channels = output_channels;
+        self.active_sample_rate = sample_rate;
+        self.active_max_block = max_block_size;
+        self.play_samples = 0;
 
         self.processing = true;
         self.active_layout = Some(layout);

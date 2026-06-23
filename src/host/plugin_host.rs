@@ -54,6 +54,10 @@ pub struct PluginHost {
     param_index: ParameterIndex,
     param_id_to_index: HashMap<u32, usize>,
     shared_plugin: SharedPlugin,
+    param_flush_tx: Sender<()>,
+    /// When false, parameter writes are followed by `process()` so
+    /// `IParameterChanges` reach the hardware (required by Overbridge).
+    control_only: bool,
     param_change_rx: Receiver<(u32, f64)>,
     plugin_info: PluginInfo,
     audio_device_name: String,
@@ -125,6 +129,7 @@ impl PluginHost {
         let audio_channels = audio_device.as_ref().map(|d| d.channels).unwrap_or(2);
 
         let shared_plugin: SharedPlugin = Arc::new(Mutex::new(plugin));
+        let param_flush_for_host = param_flush_tx.clone();
 
         let params_for_audio = Arc::clone(&parameters);
         let plugin_for_audio = Arc::clone(&shared_plugin);
@@ -204,6 +209,8 @@ impl PluginHost {
             param_index,
             param_id_to_index,
             shared_plugin,
+            param_flush_tx: param_flush_for_host,
+            control_only,
             param_change_rx,
             plugin_info,
             audio_device_name,
@@ -261,18 +268,50 @@ impl PluginHost {
     }
 
     pub fn set_parameter(&self, index: usize, value: f64) -> Result<()> {
-        self.cmd_tx
-            .send(HostCommand::SetParameter { index, value })
-            .context("send set_parameter command")
+        // Apply on the calling thread (HTTP / WS). Overbridge delivers host →
+        // device through IParameterChanges inside process(), not setParamNormalized
+        // alone (see docs/designs/overbridge-param-sync.md).
+        let mut p = self.shared_plugin.lock();
+        p.set_parameter(index, value)
+            .with_context(|| format!("set_parameter index {index}"))?;
+        crate::host::param_sync::update_param_snapshot(&mut p, &self.parameters, index);
+        if self.control_only {
+            p.clear_pending_param_changes();
+        } else {
+            p.deliver_pending_via_process()?;
+        }
+        let _ = self.param_flush_tx.try_send(());
+        Ok(())
+    }
+
+    /// Apply several parameter writes under one lock, then one `process()` so
+    /// all `IParameterChanges` reach the hardware together (crossfader morphs).
+    pub fn set_parameters_batch(&self, updates: &[(usize, f64)]) -> Result<()> {
+        if updates.is_empty() {
+            return Ok(());
+        }
+        let mut p = self.shared_plugin.lock();
+        for &(index, value) in updates {
+            p.set_parameter(index, value)
+                .with_context(|| format!("set_parameter index {index}"))?;
+            crate::host::param_sync::update_param_snapshot(&mut p, &self.parameters, index);
+        }
+        if self.control_only {
+            p.clear_pending_param_changes();
+        } else {
+            p.deliver_pending_via_process()?;
+        }
+        let _ = self.param_flush_tx.try_send(());
+        Ok(())
     }
 
     pub fn set_parameter_by_name(&self, name: &str, value: f64) -> Result<()> {
-        self.cmd_tx
-            .send(HostCommand::SetParameterByName {
-                name: name.to_string(),
-                value,
-            })
-            .context("send set_parameter_by_name command")
+        let idx = *self
+            .param_index
+            .read()
+            .get(&name.to_ascii_lowercase())
+            .with_context(|| format!("parameter not found: {name}"))?;
+        self.set_parameter(idx, value)
     }
 
     pub fn send_midi_note(&self, channel: u8, note: u8, velocity: u8, on: bool) -> Result<()> {

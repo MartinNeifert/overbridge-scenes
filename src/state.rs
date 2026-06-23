@@ -233,6 +233,17 @@ pub struct SetParameterByNameRequest {
 }
 
 #[derive(Debug, serde::Deserialize)]
+pub struct BatchParamUpdate {
+    pub index: usize,
+    pub value: f64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct BatchSetParametersRequest {
+    pub updates: Vec<BatchParamUpdate>,
+}
+
+#[derive(Debug, serde::Deserialize)]
 pub struct MidiNoteRequest {
     pub channel: u8,
     pub note: u8,

@@ -10,7 +10,7 @@ use truce_rack_core::plugin::{Plugin, PluginCore, ProcessContext};
 use truce_rack::vst3::Vst3Plugin;
 
 use crate::host::audio_device::{find_device_by_name, OverbridgeAudioDevice};
-use crate::host::param_sync::sync_params_from_plugin;
+use crate::host::param_sync::{sync_params_from_plugin, update_param_snapshot};
 use crate::host::plugin_host::{HostCommand, ParameterSnapshot, SharedPlugin};
 
 pub struct AudioEngine;
@@ -1053,7 +1053,7 @@ pub(crate) fn apply_command(
     match cmd {
         HostCommand::SetParameter { index, value } => {
             if plugin.set_parameter(index, value).is_ok() {
-                update_param_cache(plugin, parameters, index);
+                update_param_snapshot(plugin, parameters, index);
                 let _ = param_flush.try_send(());
             }
         }
@@ -1064,7 +1064,7 @@ pub(crate) fn apply_command(
                 .position(|p| p.name.eq_ignore_ascii_case(&name));
             if let Some(index) = idx {
                 if plugin.set_parameter(index, value).is_ok() {
-                    update_param_cache(plugin, parameters, index);
+                    update_param_snapshot(plugin, parameters, index);
                     let _ = param_flush.try_send(());
                 }
             }
@@ -1123,22 +1123,6 @@ pub(crate) fn apply_command(
         }
         HostCommand::SyncAllParameters => {
             sync_params_from_plugin(plugin, parameters, true, None);
-        }
-    }
-}
-
-fn update_param_cache(
-    plugin: &Vst3Plugin,
-    parameters: &Arc<RwLock<Vec<ParameterSnapshot>>>,
-    index: usize,
-) {
-    let mut params = parameters.write();
-    if let Some(snap) = params.get_mut(index) {
-        if let Ok(value) = plugin.parameter_value(index) {
-            snap.value = value;
-            snap.display = plugin
-                .parameter_value_string(index, value)
-                .unwrap_or_else(|_| format!("{value:.4}"));
         }
     }
 }

@@ -16,7 +16,7 @@ use crate::host::ParameterSnapshot;
 use crate::match_devices;
 use crate::state::{
     AppState, MidiCcRequest, MidiNoteRequest, RawMidiRequest, SelectPluginRequest,
-    SetParameterByNameRequest, SetParameterRequest, SharedState, StatusResponse,
+    SetParameterByNameRequest, SetParameterRequest, BatchSetParametersRequest, SharedState, StatusResponse,
 };
 
 pub fn router(state: SharedState, web_dir: PathBuf) -> Router {
@@ -26,6 +26,7 @@ pub fn router(state: SharedState, web_dir: PathBuf) -> Router {
         .route("/api/selector", get(selector))
         .route("/api/select-plugin", post(select_plugin))
         .route("/api/parameters", get(list_parameters))
+        .route("/api/parameters/batch", post(set_parameters_batch))
         .route("/api/parameters/{index}", get(get_parameter))
         .route("/api/parameters/{index}", post(set_parameter))
         .route("/api/parameters/by-name", post(set_parameter_by_name))
@@ -143,6 +144,22 @@ async fn set_parameter_by_name(
         .find_parameter_by_name(&body.name)
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)
+}
+
+async fn set_parameters_batch(
+    State(state): State<SharedState>,
+    Json(body): Json<BatchSetParametersRequest>,
+) -> Result<StatusCode, StatusCode> {
+    let updates: Vec<(usize, f64)> = body
+        .updates
+        .into_iter()
+        .map(|u| (u.index, u.value))
+        .collect();
+    state
+        .host()
+        .set_parameters_batch(&updates)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(StatusCode::OK)
 }
 
 async fn midi_note(

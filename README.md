@@ -35,12 +35,55 @@ cd overbridge-scenes
 # Ensure device is USB-connected in Overbridge mode
 ./scripts/start-engine.sh
 
-# Launch host (pick your device plugin)
-./target/release/ob-host --plugin Digitakt
+# Launch host (duplex + monitoring is the default — see "Running the server" below)
+RUST_LOG=info ./target/release/ob-host --plugin Digitakt
 
 # Open scenes control surface
 open http://127.0.0.1:7780/scenes.html
 ```
+
+## Running the server
+
+With the Digitakt (or other Elektron device) connected in **Overbridge USB mode** and Overbridge Engine running:
+
+```bash
+cd overbridge-scenes
+
+# Build once (or after code changes)
+cargo build --release
+
+# Recommended: native duplex + device monitoring (keeps analog Main Out audible)
+RUST_LOG=info ./target/release/ob-host --plugin "Digitakt" --duplex Digitakt
+```
+
+`config/default.json` enables duplex by default (`duplex.enabled: true`, device `"Digitakt"`), so this is equivalent when using the default config:
+
+```bash
+RUST_LOG=info ./target/release/ob-host --plugin "Digitakt"
+```
+
+**URLs** (same server):
+
+| Page | URL |
+|------|-----|
+| Scenes & A/B crossfader | http://127.0.0.1:7780/scenes.html |
+| Classic parameter browser | http://127.0.0.1:7780/ |
+
+**Stop the server:**
+
+```bash
+pkill -f 'target/release/ob-host'
+```
+
+**Other audio modes** (see [docs/designs/audio-cutout-and-duplex-fix.md](docs/designs/audio-cutout-and-duplex-fix.md)):
+
+| Mode | Command / config | Device audio |
+|------|------------------|--------------|
+| **Duplex + monitor** (default) | `--duplex` or `duplex.enabled: true` | Analog out stays audible (USB return monitoring) |
+| Control-only | `--control-only` or `control_only: true` | Untouched; no device opened |
+| Legacy monitor | `--audio` | Plugin output to device (usually silent; not recommended) |
+
+Duplex options in config: `duplex.device`, `duplex.monitor`, `duplex.monitor_source`, `duplex.monitor_gain`.
 
 ## Scenes & crossfader
 
@@ -236,12 +279,17 @@ See [`docs/README.md`](docs/README.md) for the full index.
 | Flag | Description |
 |------|-------------|
 | `--plugin NAME` | Plugin name substring (Digitakt, Syntakt, …) |
+| `--duplex [DEVICE]` | Native CoreAudio duplex on the Elektron device + monitor its audio back to analog out (recommended) |
+| `--control-only` | Parameter/MIDI control only; do not open the device audio path |
+| `--audio` | Legacy cpal monitor mode (plugin output to device) |
+| `--passthru` | Loop device input back to output via cpal |
 | `--list-plugins` | Scan and list available plugins |
 | `--port 7780` | API listen port |
 | `--plugin-dir PATH` | VST3 scan directory |
 | `--mappings PATH` | MIDI CC → parameter mapping file |
 | `--no-engine` | Don't auto-launch Overbridge Engine |
 | `--config PATH` | Host config JSON |
+| `--gui` | Open the Overbridge plugin editor window (`OB_GUI=1`) |
 
 Environment variables: `OB_PLUGIN`, `OB_PORT`, `OB_PLUGIN_DIR`.
 

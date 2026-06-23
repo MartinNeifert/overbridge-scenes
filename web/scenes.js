@@ -429,6 +429,10 @@ function applyCrossfade() {
           const lo = Math.min(ideal0, ideal);
           const hi = Math.max(ideal0, ideal);
           if (v0 >= lo - EPS && v0 <= hi + EPS) g.engaged = true;
+          // If the live value sits outside the swept range (common after a
+          // hardware knob move), pickup would never engage and the fader would
+          // appear dead. After a meaningful fader move, fall back to jump.
+          else if (Math.abs(t - t0) > 0.05) g.engaged = true;
         }
         value = g.engaged ? ideal : v0;
       } else {
@@ -474,26 +478,20 @@ function flushSoon() {
 function flushApply() {
   flushScheduled = false;
   if (pendingApply.size === 0) return;
-  const open = ws && ws.readyState === WebSocket.OPEN;
+  const updates = [];
   for (const [index, value] of pendingApply) {
-    const prev = lastSent.get(index);
-    if (prev !== undefined && Math.abs(prev - value) < EPS) continue;
     lastSent.set(index, value);
-    // optimistic local update so capture/readouts feel instant
     const p = liveByIndex.get(index);
     if (p) p.value = value;
-    if (open) {
-      ws.send(JSON.stringify({ action: "set_parameter", index, value }));
-    } else {
-      fetch(`/api/parameters/${index}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value }),
-      }).catch(() => {});
-    }
+    updates.push({ index, value });
   }
   pendingApply.clear();
   updateLiveReadouts();
+  fetch("/api/parameters/batch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ updates }),
+  }).catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
