@@ -293,12 +293,28 @@ impl AudioEngine {
                     // output and return so CoreAudio never misses its deadline —
                     // that deadline-miss is what makes Overbridge drop the device.
                     let Some(mut p) = plugin_cb.try_lock() else {
+                        // Couldn't touch the plugin this buffer. Emit a fallback
+                        // that avoids a hard silence gap — silence is what makes
+                        // the monitor click and can make Overbridge drop the
+                        // device. Passthru repeats the captured input; monitor
+                        // repeats the last processed output block; otherwise
+                        // silence.
                         if passthru {
                             let cap = captured_for_output.lock();
                             for frame in 0..frames {
                                 for ch in 0..channels {
                                     out[frame * channels + ch] =
                                         cap.get(ch).and_then(|c| c.get(frame)).copied().unwrap_or(0.0);
+                                }
+                            }
+                        } else if monitor {
+                            for frame in 0..frames {
+                                for ch in 0..channels {
+                                    out[frame * channels + ch] = output_buf
+                                        .get(ch.min(output_buf.len().saturating_sub(1)))
+                                        .and_then(|c| c.get(frame))
+                                        .copied()
+                                        .unwrap_or(0.0);
                                 }
                             }
                         } else {
