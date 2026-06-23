@@ -271,6 +271,11 @@ impl PluginHost {
         // Apply on the calling thread (HTTP / WS). Overbridge delivers host →
         // device through IParameterChanges inside process(), not setParamNormalized
         // alone (see docs/designs/overbridge-param-sync.md).
+        //
+        // Lock ordering invariant: always acquire `shared_plugin` BEFORE
+        // `parameters` (update_param_snapshot takes parameters.write() while we
+        // hold the plugin lock). Never take them in the opposite order or this
+        // will deadlock against the audio/editor threads.
         let mut p = self.shared_plugin.lock();
         p.set_parameter(index, value)
             .with_context(|| format!("set_parameter index {index}"))?;
