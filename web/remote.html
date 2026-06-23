@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Crossfader — Overbridge Scenes</title>
+  <link rel="stylesheet" href="remote.css" />
+</head>
+<body>
+  <div class="remote-app">
+    <header class="remote-header">
+      <p class="remote-title">Crossfader</p>
+      <p class="remote-meta" id="remote-meta">Connecting…</p>
+    </header>
+
+    <div class="remote-labels">
+      <span class="remote-label remote-label-a" id="remote-name-a">A</span>
+      <span class="remote-readout" id="remote-readout">0%</span>
+      <span class="remote-label remote-label-b" id="remote-name-b">B</span>
+    </div>
+
+    <div class="remote-track">
+      <input type="range" id="remote-slider" min="0" max="1000" step="1" value="0"
+        aria-label="Crossfader" />
+    </div>
+
+    <div class="remote-jumps">
+      <button type="button" id="remote-jump-a" class="remote-btn">A</button>
+      <button type="button" id="remote-jump-center" class="remote-btn">Center</button>
+      <button type="button" id="remote-jump-b" class="remote-btn">B</button>
+    </div>
+
+    <p class="remote-status" id="remote-status" aria-live="polite"></p>
+  </div>
+  <script src="remote.js"></script>
+</body>
+</html>

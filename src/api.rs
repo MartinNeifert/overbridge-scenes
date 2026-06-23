@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, State, WebSocketUpgrade, ws::{Message, WebSocket}},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use futures_util::{SinkExt, StreamExt};
 use std::path::PathBuf;
@@ -16,6 +16,7 @@ use axum::http::{header, HeaderValue};
 use crate::devices;
 use crate::host::ParameterSnapshot;
 use crate::match_devices;
+use crate::net_util;
 use crate::state::{
     AppState, MidiCcRequest, MidiNoteRequest, RawMidiRequest, SelectPluginRequest,
     SetParameterByNameRequest, SetParameterRequest, BatchSetParametersRequest, SharedState, StatusResponse,
@@ -35,6 +36,10 @@ pub fn router(state: SharedState, web_dir: PathBuf) -> Router {
         .route("/api/midi/note", post(midi_note))
         .route("/api/midi/cc", post(midi_cc))
         .route("/api/midi/raw", post(midi_raw))
+        .route("/api/midi/inputs", get(list_midi_inputs))
+        .route("/api/scenes/{plugin}/active", get(get_active_pattern).put(put_active_pattern))
+        .route("/api/scenes/{plugin}/{pattern}", get(get_scenes))
+        .route("/api/scenes/{plugin}/{pattern}", put(put_scenes))
         .route("/api/ws", get(ws_handler))
         .with_state(state.clone());
 
@@ -74,6 +79,10 @@ async fn status(State(state): State<SharedState>) -> Json<StatusResponse> {
         audio_channels: host.audio_channels(),
         devices: snapshot.devices,
         plugin_matches_device,
+        debug: state.debug(),
+        api_port: state.config().api_port,
+        lan_ip: net_util::local_lan_ip(),
+        lan_hostname: net_util::local_hostname(),
     })
 }
 
@@ -203,12 +212,102 @@ async fn midi_raw(
     Ok(StatusCode::OK)
 }
 
+async fn list_midi_inputs(State(state): State<SharedState>) -> Json<Vec<crate::midi::MidiInputPort>> {
+    Json(state.midi_input_ports())
+}
+
+#[derive(serde::Serialize)]
+struct ActivePatternResponse {
+    pattern: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct ActivePatternRequest {
+    pattern: String,
+}
+
+async fn get_active_pattern(
+    State(state): State<SharedState>,
+    Path(plugin): Path<String>,
+) -> Result<Json<ActivePatternResponse>, StatusCode> {
+    let pattern = tokio::task::spawn_blocking(move || {
+        state.scenes_store().load_active_pattern(&plugin)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .map_err(|e| {
+        tracing::error!("load active pattern failed: {e:#}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(ActivePatternResponse { pattern }))
+}
+
+async fn put_active_pattern(
+    State(state): State<SharedState>,
+    Path(plugin): Path<String>,
+    Json(body): Json<ActivePatternRequest>,
+) -> Result<StatusCode, StatusCode> {
+    let pattern = body.pattern.trim().to_string();
+    if pattern.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let state = state.clone();
+    tokio::task::spawn_blocking(move || state.scenes_store().save_active_pattern(&plugin, &pattern))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|e| {
+            tracing::error!("save active pattern failed: {e:#}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn get_scenes(
+    State(state): State<SharedState>,
+    Path((plugin, pattern)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let data = tokio::task::spawn_blocking(move || {
+        state.scenes_store().load(&plugin, &pattern)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .map_err(|e| {
+        tracing::error!("load scenes failed: {e:#}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    match data {
+        Some(v) => Ok(Json(v)),
+        None => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+async fn put_scenes(
+    State(state): State<SharedState>,
+    Path((plugin, pattern)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<StatusCode, StatusCode> {
+    if !body.is_object() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let state = state.clone();
+    tokio::task::spawn_blocking(move || state.scenes_store().save(&plugin, &pattern, &body))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|e| {
+            tracing::error!("save scenes failed: {e:#}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<SharedState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws(socket, state))
 }
 
 async fn handle_ws(socket: WebSocket, state: SharedState) {
     let (mut sender, mut receiver) = socket.split();
+    let mut midi_rx = state.midi_subscribe();
 
     let params = state.host().parameters();
     let init = serde_json::json!({ "type": "parameters", "data": params });
@@ -236,6 +335,22 @@ async fn handle_ws(socket: WebSocket, state: SharedState) {
                     }
                     Some(Ok(Message::Close(_))) | None => break,
                     _ => {}
+                }
+            }
+            midi = midi_rx.recv() => {
+                match midi {
+                    Ok(event) => {
+                        let msg = serde_json::json!({
+                            "type": "midi",
+                            "port": event.port,
+                            "data": event.data,
+                        });
+                        if sender.send(Message::Text(msg.to_string().into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
             _ = tick.tick() => {

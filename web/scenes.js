@@ -38,6 +38,8 @@ let storedBaseline = null; // raw [{index,id,value}] from storage, awaiting reso
 let baselineResolved = false; // true once this pattern's baseline is loaded or auto-seeded
 let baselineExplicit = false; // true after Capture baseline — until then, live wins over auto-seed for empty sides
 let activeSceneId = "1"; // scene the picker adds to
+let paramLearnSceneId = null; // scene id while waiting for a hardware wiggle
+let paramLearnBaseline = null; // Map<index, value> snapshot at learn start
 
 let ws = null;
 const pendingApply = new Map(); // index -> value, flushed on rAF
@@ -64,22 +66,33 @@ const el = {
   jumpCenter: document.getElementById("sc-jump-center"),
   jumpB: document.getElementById("sc-jump-b"),
   captureBase: document.getElementById("sc-capture-base"),
+  clockSlide: document.getElementById("sc-clock-slide"),
+  clockBars: document.getElementById("sc-clock-bars"),
+  clockSlideStatus: document.getElementById("sc-clock-slide-status"),
+  midiInput: document.getElementById("sc-midi-input"),
   activeScene: document.getElementById("sc-active-scene"),
-  sliderMode: document.getElementById("sc-slider-mode"),
+  pickerMeta: document.getElementById("sc-picker-meta"),
   search: document.getElementById("sc-param-search"),
   results: document.getElementById("sc-param-results"),
   scenes: document.getElementById("sc-scenes"),
-  midiInput: document.getElementById("sc-midi-input"),
-  midiMode: document.getElementById("sc-midi-mode"),
-  midiStep: document.getElementById("sc-midi-step"),
-  midiLearn: document.getElementById("sc-midi-learn"),
-  midiStatus: document.getElementById("sc-midi-status"),
+  scenesMeta: document.getElementById("sc-scenes-meta"),
   patternBank: document.getElementById("sc-pattern-bank"),
   patternNum: document.getElementById("sc-pattern-num"),
   patternId: document.getElementById("sc-pattern-id"),
   pcFollow: document.getElementById("sc-pc-follow"),
-  pcInput: document.getElementById("sc-pc-input"),
   pcStatus: document.getElementById("sc-pc-status"),
+  xfMidiInput: document.getElementById("sc-xf-midi-input"),
+  midiMode: document.getElementById("sc-midi-mode"),
+  midiStep: document.getElementById("sc-midi-step"),
+  midiLearn: document.getElementById("sc-midi-learn"),
+  midiClear: document.getElementById("sc-midi-clear"),
+  midiConfigMeta: document.getElementById("sc-midi-config-meta"),
+  midiMapDisplay: document.getElementById("sc-midi-map-display"),
+  midiLog: document.getElementById("sc-midi-log"),
+  midiLogMeta: document.getElementById("sc-midi-log-meta"),
+  midiLogLines: document.getElementById("sc-midi-log-lines"),
+  midiLogClear: document.getElementById("sc-midi-log-clear"),
+  midiLogPause: document.getElementById("sc-midi-log-pause"),
 };
 
 // Soft-takeover mode for the crossfader — how the morph reconciles with each
@@ -90,11 +103,9 @@ const el = {
 //               endpoints as the fader moves (a.k.a. "value scaling")
 const SLIDER_MODE_KEY = "ob-scenes:slider-mode";
 const SLIDER_MODES = ["jump", "pickup", "scale"];
-let sliderMode = (() => {
-  let stored = localStorage.getItem(SLIDER_MODE_KEY);
-  if (stored === "interpolate" || stored === "scale-abs") stored = "scale"; // migrate old labels
-  return SLIDER_MODES.includes(stored) ? stored : "jump";
-})();
+// Takeover selector hidden for now — crossfader always uses jump. Pickup/scale
+// logic in applyCrossfade() is kept for when the UI returns.
+let sliderMode = "jump";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -179,35 +190,137 @@ function legacyStoreKey() {
   return STORE_PREFIX + (plugin || "default");
 }
 
-function writeScenes() {
+function scenesApiUrl() {
+  const p = encodeURIComponent(plugin || "default");
+  const pat = encodeURIComponent(patternKey());
+  return `/api/scenes/${p}/${pat}`;
+}
+
+function activePatternApiUrl() {
+  return `/api/scenes/${encodeURIComponent(plugin || "default")}/active`;
+}
+
+async function persistActivePattern() {
+  if (!plugin) return;
   try {
-    localStorage.setItem(
-      storeKey(),
-      JSON.stringify({
-        scenes,
-        crossfader: { a: crossfader.a, b: crossfader.b },
-        baseline: { explicit: baselineExplicit, values: serializeBaseline() },
-      })
-    );
+    await fetch(activePatternApiUrl(), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pattern: patternKey() }),
+    });
   } catch (e) {
-    console.warn("scene save failed", e);
+    console.warn("active pattern save failed", e);
+  }
+}
+
+function snapshotScenesPayload() {
+  return {
+    scenes,
+    crossfader: { a: crossfader.a, b: crossfader.b },
+    baseline: { explicit: baselineExplicit, values: serializeBaseline() },
+  };
+}
+
+function applyScenesPayload(data) {
+  if (Array.isArray(data.scenes)) {
+    for (const s of data.scenes) {
+      const slot = sceneById(s.id);
+      if (!slot) continue;
+      if (typeof s.name === "string") slot.name = s.name;
+      if (Array.isArray(s.params)) {
+        slot.params = s.params
+          .filter((p) => p && Number.isFinite(p.value))
+          .map((p) => ({
+            index: p.index,
+            id: p.id,
+            name: p.name || "",
+            value: p.value,
+          }));
+      }
+    }
+  }
+  if (data.crossfader) {
+    crossfader.a = data.crossfader.a ?? null;
+    crossfader.b = data.crossfader.b ?? null;
+  }
+  if (data.baseline) {
+    if (Array.isArray(data.baseline)) {
+      storedBaseline = data.baseline;
+      baselineExplicit = true;
+    } else if (Array.isArray(data.baseline.values)) {
+      storedBaseline = data.baseline.values;
+      baselineExplicit = !!data.baseline.explicit;
+    }
+  }
+}
+
+function readLocalScenesRaw() {
+  let raw = localStorage.getItem(storeKey());
+  if (!raw && pattern.bank === 0 && pattern.num === 0) {
+    const legacy = localStorage.getItem(legacyStoreKey());
+    if (legacy) {
+      raw = legacy;
+      try {
+        localStorage.setItem(storeKey(), legacy);
+        localStorage.removeItem(legacyStoreKey());
+      } catch (e) {
+        console.warn("scene migration failed", e);
+      }
+    }
+  }
+  return raw;
+}
+
+async function writeScenes() {
+  const payload = snapshotScenesPayload();
+  try {
+    const res = await fetch(scenesApiUrl(), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (e) {
+    console.warn("scene save to disk failed, keeping browser copy", e);
+    try {
+      localStorage.setItem(storeKey(), JSON.stringify(payload));
+    } catch (err) {
+      console.warn("scene save failed", err);
+    }
   }
 }
 
 let saveTimer = null;
 function save() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(writeScenes, 200);
+  saveTimer = setTimeout(() => {
+    writeScenes();
+  }, 200);
 }
 
-// Flush a pending debounced save immediately — used before switching patterns so
-// the current pattern's edits aren't lost to the still-pending timer.
-function saveNow() {
+async function saveNow() {
   clearTimeout(saveTimer);
-  writeScenes();
+  await writeScenes();
 }
 
-function load() {
+function flushScenesOnExit() {
+  clearTimeout(saveTimer);
+  const payload = JSON.stringify(snapshotScenesPayload());
+  try {
+    fetch(scenesApiUrl(), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: payload,
+      keepalive: true,
+    });
+  } catch (e) {
+    try {
+      localStorage.setItem(storeKey(), payload);
+    } catch (_) {}
+  }
+}
+
+async function load() {
   scenes = freshScenes();
   crossfader = { a: null, b: null, pos: 0 };
   baseline = new Map();
@@ -215,64 +328,36 @@ function load() {
   baselineResolved = false;
   baselineExplicit = false;
   try {
-    let raw = localStorage.getItem(storeKey());
-    // One-time migration: pre-pattern scenes land in the default pattern (A01).
-    if (!raw && pattern.bank === 0 && pattern.num === 0) {
-      const legacy = localStorage.getItem(legacyStoreKey());
-      if (legacy) {
-        raw = legacy;
-        try {
-          localStorage.setItem(storeKey(), legacy);
-          localStorage.removeItem(legacyStoreKey());
-        } catch (e) {
-          console.warn("scene migration failed", e);
-        }
+    let data = null;
+    const res = await fetch(scenesApiUrl());
+    if (res.ok) {
+      data = await res.json();
+    } else if (res.status === 404) {
+      const raw = readLocalScenesRaw();
+      if (raw) {
+        data = JSON.parse(raw);
+        await writeScenes();
       }
+    } else {
+      throw new Error(`HTTP ${res.status}`);
     }
-    if (raw) {
-      const data = JSON.parse(raw);
-      if (Array.isArray(data.scenes)) {
-        for (const s of data.scenes) {
-          const slot = sceneById(s.id);
-          if (!slot) continue;
-          if (typeof s.name === "string") slot.name = s.name;
-          if (Array.isArray(s.params)) {
-            slot.params = s.params
-              .filter((p) => p && Number.isFinite(p.value))
-              .map((p) => ({
-                index: p.index,
-                id: p.id,
-                name: p.name || "",
-                value: p.value,
-              }));
-          }
-        }
-      }
-      if (data.crossfader) {
-        crossfader.a = data.crossfader.a ?? null;
-        crossfader.b = data.crossfader.b ?? null;
-      }
-      if (data.baseline) {
-        if (Array.isArray(data.baseline)) {
-          // Legacy: bare array — treat as an intentional capture.
-          storedBaseline = data.baseline;
-          baselineExplicit = true;
-        } else if (Array.isArray(data.baseline.values)) {
-          storedBaseline = data.baseline.values;
-          baselineExplicit = !!data.baseline.explicit;
-        }
-      }
-    }
+    if (data) applyScenesPayload(data);
   } catch (e) {
-    console.warn("scene load failed", e);
+    console.warn("scene load from disk failed, trying browser storage", e);
+    try {
+      const raw = readLocalScenesRaw();
+      if (raw) applyScenesPayload(JSON.parse(raw));
+    } catch (err) {
+      console.warn("scene load failed", err);
+    }
   }
   if (liveParams.length) validateScenes();
 }
 
 // Re-resolve stored param indices against the live parameter list (indices can
 // shift between plugins / versions; ids and names are more stable). Mutates the
-// existing param objects in place so event-handler closures (scene sliders,
-// Map buttons) that captured them stay valid across periodic re-syncs.
+// existing param objects in place so event-handler closures (scene sliders)
+// that captured them stay valid across periodic re-syncs.
 function validateScenes() {
   const byId = new Map();
   const byName = new Map();
@@ -349,18 +434,19 @@ function renderPattern() {
 // Switch the active pattern: persist the current pattern's scenes, then load the
 // target pattern's own scene set. No values are pushed to the device on switch —
 // only the editable scene set changes.
-function setPattern(bank, num, opts = {}) {
+async function setPattern(bank, num, opts = {}) {
   bank = clamp(bank | 0, 0, PATTERN_BANKS - 1);
   num = clamp(num | 0, 0, PATTERNS_PER_BANK - 1);
   if (bank === pattern.bank && num === pattern.num) {
     renderPattern();
     return;
   }
-  saveNow();
+  await saveNow();
   endXfGrab();
   pattern = { bank, num };
   persistPatternSel();
-  load();
+  void persistActivePattern();
+  await load();
   renderAll();
   if (opts.toast !== false) toast(`Pattern ${patternKey()}`);
 }
@@ -627,6 +713,10 @@ function renderAssign() {
         )}</option>`
     )
     .join("");
+  if (el.pickerMeta) {
+    const scene = sceneById(activeSceneId);
+    el.pickerMeta.textContent = scene ? scene.name : "";
+  }
 }
 
 function renderCrossfaderReadout() {
@@ -647,6 +737,13 @@ function renderCrossfaderReadout() {
   el.crossfader.value = String(Math.round(crossfader.pos * 1000));
 }
 
+function renderScenesMeta() {
+  if (!el.scenesMeta) return;
+  el.scenesMeta.textContent = scenes
+    .map((s) => `${s.name} (${s.params.length})`)
+    .join(" · ");
+}
+
 function renderScenes() {
   // Rebuilding rows destroys the slider you're dragging (and its grab anchor).
   if (activeSliderDrag > 0) {
@@ -657,6 +754,7 @@ function renderScenes() {
   for (const scene of scenes) {
     el.scenes.appendChild(renderSceneCard(scene));
   }
+  renderScenesMeta();
 }
 
 function renderSceneCard(scene) {
@@ -698,9 +796,20 @@ function renderSceneCard(scene) {
   snapBtn.title = "Re-capture the live value of every parameter already in this scene";
   snapBtn.disabled = scene.params.length === 0;
 
+  const learnBtn = mkBtn(
+    paramLearnSceneId === scene.id ? "Learn…" : "Learn",
+    "sc-btn-ghost sc-btn-sm" + (paramLearnSceneId === scene.id ? " sc-btn-active" : ""),
+    () => toggleParamLearn(scene)
+  );
+  learnBtn.title =
+    "Click, then move a hardware control — the parameter that changes is added to this scene";
+
   const editBtn = mkBtn("Add params ↑", "sc-btn-ghost sc-btn-sm", () => {
+    cancelParamLearn();
     activeSceneId = scene.id;
     renderAssign();
+    renderScenes();
+    renderResults();
     el.search.focus();
     toast(`Adding to ${scene.name}`);
   });
@@ -715,7 +824,7 @@ function renderSceneCard(scene) {
   });
   clearBtn.disabled = scene.params.length === 0;
 
-  actions.append(recallBtn, snapBtn, editBtn, clearBtn);
+  actions.append(recallBtn, snapBtn, learnBtn, editBtn, clearBtn);
   card.appendChild(actions);
 
   const list = document.createElement("div");
@@ -723,7 +832,10 @@ function renderSceneCard(scene) {
   if (scene.params.length === 0) {
     const empty = document.createElement("div");
     empty.className = "sc-empty";
-    empty.textContent = "No parameters. Use the picker above to map some.";
+    empty.textContent =
+      paramLearnSceneId === scene.id
+        ? "Learn armed — move a hardware control."
+        : "No parameters. Click Learn or use the picker above.";
     list.appendChild(empty);
   } else {
     for (const p of scene.params) list.appendChild(renderParamRow(scene, p));
@@ -745,18 +857,13 @@ function renderParamRow(scene, p) {
   row.innerHTML = `
     <div class="sc-param-top">
       <span class="sc-param-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
-      <div class="sc-param-tools">
-        <span class="sc-param-val" data-val>= ${fmt(p.value)}</span>
-        <button class="sc-icon-btn" data-map title="Map: save current live value here">⤓</button>
-        <button class="sc-icon-btn danger" data-del title="Remove from scene">✕</button>
-      </div>
+      <button class="sc-icon-btn danger" data-del title="Remove from scene">✕</button>
     </div>
     <input type="range" min="0" max="1000" step="1" value="${Math.round(clamp(norm, 0, 1) * 1000)}" />
     <div class="sc-param-live" data-live>live: ${lv !== undefined ? fmt(lv) : "—"}</div>
   `;
 
   const slider = row.querySelector('input[type="range"]');
-  const valEl = row.querySelector("[data-val]");
 
   // A scene-row slider edits this scene's stored value AND auditions it live:
   // dragging pushes the parameter straight to the device so you can dial the
@@ -785,25 +892,9 @@ function renderParamRow(scene, p) {
     // periodic validateScenes() rebuild may have replaced) so the value sticks.
     const target = scene.params.find((x) => x.index === p.index) || p;
     target.value = min + t * (max - min);
-    valEl.textContent = `= ${fmt(target.value)}`;
     save();
     // Scene-state only: this sets the value the top crossfader morphs toward.
     // It must NOT touch the device — moving the fader applies it.
-  });
-
-  row.querySelector("[data-map]").addEventListener("click", () => {
-    const v = liveValue(p.index);
-    if (v === undefined) {
-      toast("No live value yet");
-      return;
-    }
-    p.value = v;
-    save();
-    const t = (p.value - min) / (max - min);
-    slider.value = String(Math.round(clamp(t, 0, 1) * 1000));
-    valEl.textContent = `= ${fmt(p.value)}`;
-    toast(`Mapped ${p.name}`);
-    reapplyIfAssigned(scene);
   });
 
   row.querySelector("[data-del]").addEventListener("click", () => {
@@ -892,17 +983,81 @@ function toggleParamInActiveScene(liveP) {
   if (existing) {
     scene.params = scene.params.filter((x) => x.index !== liveP.index);
     toast(`Removed ${liveP.name}`);
+    save();
+    afterSceneMutation();
+  } else {
+    addParamToScene(scene, liveP, { toastLabel: "Added" });
+  }
+}
+
+const PARAM_LEARN_EPS = 1e-4;
+
+function addParamToScene(scene, liveP, opts = {}) {
+  const existing = scene.params.find((x) => x.index === liveP.index);
+  if (existing) {
+    existing.value = liveP.value;
+    toast(`${opts.toastLabel || "Learned"} ${liveP.name} · updated value`);
   } else {
     scene.params.push({
       index: liveP.index,
       id: liveP.id,
       name: liveP.name,
-      value: liveP.value, // capture current live value
+      value: liveP.value,
     });
-    toast(`Mapped ${liveP.name} → ${scene.name}`);
+    toast(`${opts.toastLabel || "Learned"} ${liveP.name} → ${scene.name}`);
   }
   save();
   afterSceneMutation();
+}
+
+function toggleParamLearn(scene) {
+  if (paramLearnSceneId === scene.id) {
+    cancelParamLearn();
+    toast("Learn cancelled");
+    return;
+  }
+  paramLearnSceneId = scene.id;
+  activeSceneId = scene.id;
+  paramLearnBaseline = new Map();
+  for (const p of liveParams) paramLearnBaseline.set(p.index, p.value);
+  renderAssign();
+  renderScenes();
+  renderResults();
+  toast(`Learn · move a control for ${scene.name}`);
+}
+
+function cancelParamLearn() {
+  if (!paramLearnSceneId) return;
+  paramLearnSceneId = null;
+  paramLearnBaseline = null;
+  renderScenes();
+}
+
+function tryParamLearnFromUpdates(updates) {
+  if (!paramLearnSceneId || !paramLearnBaseline?.size) return;
+  const scene = sceneById(paramLearnSceneId);
+  if (!scene) {
+    cancelParamLearn();
+    return;
+  }
+
+  let bestIndex = null;
+  let bestDelta = PARAM_LEARN_EPS;
+  for (const u of updates) {
+    if (!paramLearnBaseline.has(u.index)) continue;
+    const delta = Math.abs(u.value - paramLearnBaseline.get(u.index));
+    if (delta > bestDelta) {
+      bestDelta = delta;
+      bestIndex = u.index;
+    }
+  }
+  if (bestIndex === null) return;
+
+  const liveP = liveByIndex.get(bestIndex);
+  if (!liveP) return;
+
+  addParamToScene(scene, liveP);
+  cancelParamLearn();
 }
 
 function snapshotLive(scene) {
@@ -956,20 +1111,25 @@ el.assignB.addEventListener("change", () => {
   applyCrossfade();
 });
 
-el.crossfader.addEventListener("pointerdown", beginXfGrab);
+el.crossfader.addEventListener("pointerdown", () => {
+  pauseClockSlideManual();
+  beginXfGrab();
+});
 el.crossfader.addEventListener("pointerup", endXfGrab);
 el.crossfader.addEventListener("pointercancel", endXfGrab);
 
 el.crossfader.addEventListener("input", () => {
+  pauseClockSlideManual();
   // Keyboard/programmatic moves arrive without a pointerdown — anchor on first
   // change so they still start from the live value rather than snapping.
-  if (!xfGrab) beginXfGrab();
+  if (!xfGrab && !clockSlideDriving) beginXfGrab();
   crossfader.pos = Number(el.crossfader.value) / 1000;
   renderCrossfaderReadout();
   applyCrossfade();
 });
 
 function jumpTo(pos) {
+  pauseClockSlideManual();
   // Jump buttons always snap, regardless of the selected takeover mode.
   endXfGrab();
   crossfader.pos = pos;
@@ -980,6 +1140,331 @@ function jumpTo(pos) {
 el.jumpA.addEventListener("click", () => jumpTo(0));
 el.jumpCenter.addEventListener("click", () => jumpTo(0.5));
 el.jumpB.addEventListener("click", () => jumpTo(1));
+
+// ---------------------------------------------------------------------------
+// Clock-driven crossfader slide (MIDI clock → 0..1 over N bars, then reset)
+// ---------------------------------------------------------------------------
+
+const CLOCK_SLIDE_KEY = "ob-scenes:clock-slide";
+const MIDI_CLOCK_PPQ = 24;
+const CLOCK_BEATS_PER_BAR = 4;
+
+let clockSlideCfg = (() => {
+  const def = { enabled: false, bars: 8 };
+  try {
+    const raw = localStorage.getItem(CLOCK_SLIDE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      def.enabled = !!parsed.enabled;
+      def.bars = parsed.bars ?? def.bars;
+    }
+  } catch (e) {
+    console.warn("clock slide cfg load failed", e);
+  }
+  def.bars = clamp(Math.round(def.bars) || 8, 1, 64);
+  return def;
+})();
+
+let clockState = {
+  tick: 0,
+  running: false,
+  pausedByUser: false,
+  awaitingSync: true,
+  syncMode: "need_start", // need_start | next_cycle
+};
+let clockSlideDriving = false;
+
+// Keep phase while clock slide is off so re-enable can latch the next bar 1.
+const TRANSPORT_ACTIVE_MS = 400;
+let midiTransport = { running: false, clocks: 0, lastClockAt: 0 };
+
+function transportPortMatch(port) {
+  if (!pcCfg.inputId) return false;
+  return portSelected(port, pcCfg.inputId);
+}
+
+function isTransportActive() {
+  return (
+    midiTransport.running &&
+    performance.now() - midiTransport.lastClockAt < TRANSPORT_ACTIVE_MS
+  );
+}
+
+function updateMidiTransport(port, bytes) {
+  if (!bytes.length || !transportPortMatch(port)) return;
+
+  for (let i = 0; i < bytes.length; ) {
+    const status = bytes[i];
+    if (status === 0xf2 && i + 2 < bytes.length) {
+      const spp = (bytes[i + 2] << 7) | bytes[i + 1];
+      midiTransport.clocks = Math.max(0, spp) * MIDI_CLOCK_PPQ;
+      midiTransport.running = true;
+      i += 3;
+      continue;
+    }
+    if (status === 0xfa) {
+      midiTransport.clocks = 0;
+      midiTransport.running = true;
+      i += 1;
+      continue;
+    }
+    if (status === 0xfc) {
+      midiTransport.running = false;
+      i += 1;
+      continue;
+    }
+    if (status === 0xfb) {
+      midiTransport.running = true;
+      i += 1;
+      continue;
+    }
+    if (status === 0xf8) {
+      midiTransport.lastClockAt = performance.now();
+      if (midiTransport.running) midiTransport.clocks += 1;
+      else {
+        // Transport already playing (Start was missed while slide was off).
+        midiTransport.running = true;
+        midiTransport.clocks += 1;
+      }
+      i += 1;
+      continue;
+    }
+    if (status >= 0xf0) {
+      i += 1;
+      continue;
+    }
+    break;
+  }
+}
+
+function resetClockSlideAwaitingSync() {
+  clockState.tick = 0;
+  clockState.running = false;
+  clockState.awaitingSync = true;
+  clockState.syncMode = "need_start";
+  renderClockSlideStatus();
+}
+
+function armClockSlideOnEnable() {
+  clockState.pausedByUser = false;
+  if (isTransportActive()) {
+    const cycle = clockSlideCycleTicks();
+    clockState.awaitingSync = true;
+    clockState.syncMode = "next_cycle";
+    clockState.running = true;
+    if (midiTransport.clocks % cycle === 0) {
+      clockState.awaitingSync = false;
+      clockState.tick = 0;
+      setCrossfaderPos(0);
+    }
+  } else {
+    resetClockSlideAwaitingSync();
+  }
+  renderClockSlideStatus();
+}
+
+function syncClockSlideFromBeats(quarterNoteBeats) {
+  const cycle = clockSlideCycleTicks();
+  const clocks = Math.max(0, quarterNoteBeats) * MIDI_CLOCK_PPQ;
+  midiTransport.clocks = clocks;
+  midiTransport.running = true;
+  clockState.tick = clocks % cycle;
+  clockState.running = true;
+  clockState.pausedByUser = false;
+  clockState.awaitingSync = false;
+  clockState.syncMode = null;
+  applyClockSlidePos();
+}
+
+function applyClockSlidePos() {
+  const cycle = clockSlideCycleTicks();
+  const pos = (clockState.tick % cycle) / cycle;
+  setCrossfaderPos(pos);
+  renderClockSlideStatus();
+}
+
+function onClockSlideClockTick() {
+  const cycle = clockSlideCycleTicks();
+  if (clockState.awaitingSync) {
+    if (clockState.syncMode !== "next_cycle") {
+      renderClockSlideStatus();
+      return;
+    }
+    if (midiTransport.clocks % cycle !== 0) {
+      renderClockSlideStatus();
+      return;
+    }
+    clockState.awaitingSync = false;
+    clockState.syncMode = null;
+    clockState.tick = 0;
+    setCrossfaderPos(0);
+    return;
+  }
+  if (!clockState.running || clockState.pausedByUser) return;
+  clockState.tick = midiTransport.clocks % cycle;
+  applyClockSlidePos();
+}
+
+function resetClockSlideSequence() {
+  clockState.tick = 0;
+  clockState.awaitingSync = false;
+  clockState.syncMode = null;
+  if (clockState.running && !clockState.pausedByUser) setCrossfaderPos(0);
+  else renderClockSlideStatus();
+}
+
+function saveClockSlideCfg() {
+  try {
+    localStorage.setItem(CLOCK_SLIDE_KEY, JSON.stringify(clockSlideCfg));
+  } catch (e) {
+    console.warn("clock slide cfg save failed", e);
+  }
+}
+
+function clockSlideCycleTicks() {
+  return clockSlideCfg.bars * CLOCK_BEATS_PER_BAR * MIDI_CLOCK_PPQ;
+}
+
+function pauseClockSlideManual() {
+  if (!clockSlideCfg.enabled || clockSlideDriving) return;
+  clockState.pausedByUser = true;
+  renderClockSlideStatus();
+}
+
+function setCrossfaderPos(pos) {
+  endXfGrab();
+  clockSlideDriving = true;
+  crossfader.pos = clamp(pos, 0, 1);
+  el.crossfader.value = String(Math.round(crossfader.pos * 1000));
+  renderCrossfaderReadout();
+  applyCrossfade();
+  clockSlideDriving = false;
+}
+
+function renderClockSlideStatus() {
+  if (!el.clockSlideStatus) return;
+  if (!clockSlideCfg.enabled) {
+    el.clockSlideStatus.textContent = "";
+    return;
+  }
+  if (!pcCfg.inputId) {
+    el.clockSlideStatus.textContent = "select Digitakt port in header MIDI";
+    return;
+  }
+  if (clockState.awaitingSync) {
+    if (clockState.syncMode === "next_cycle") {
+      const cycle = clockSlideCycleTicks();
+      const rem = cycle - (midiTransport.clocks % cycle);
+      const barsLeft = Math.max(
+        1,
+        Math.ceil(rem / (CLOCK_BEATS_PER_BAR * MIDI_CLOCK_PPQ))
+      );
+      el.clockSlideStatus.textContent = `syncing at next bar 1 · ${barsLeft} bar${barsLeft === 1 ? "" : "s"}`;
+      return;
+    }
+    el.clockSlideStatus.textContent = "waiting for Start (press Play on the Digitakt)";
+    return;
+  }
+  if (clockState.pausedByUser) {
+    el.clockSlideStatus.textContent = "paused · manual override (Start resets)";
+    return;
+  }
+  if (!clockState.running) {
+    el.clockSlideStatus.textContent = "waiting for MIDI clock";
+    return;
+  }
+  const cycle = clockSlideCycleTicks();
+  const t = clockState.tick % cycle;
+  const bar = Math.floor(t / (CLOCK_BEATS_PER_BAR * MIDI_CLOCK_PPQ)) + 1;
+  const beat =
+    Math.floor((t % (CLOCK_BEATS_PER_BAR * MIDI_CLOCK_PPQ)) / MIDI_CLOCK_PPQ) + 1;
+  el.clockSlideStatus.textContent = `bar ${bar}/${clockSlideCfg.bars} · beat ${beat}`;
+}
+
+function handleClockSlide(port, bytes) {
+  if (!clockSlideCfg.enabled || !bytes.length || !pcCfg.inputId) return;
+  if (!portSelected(port, pcCfg.inputId)) return;
+
+  for (let i = 0; i < bytes.length; ) {
+    const status = bytes[i];
+    if (status === 0xf2 && i + 2 < bytes.length) {
+      const spp = (bytes[i + 2] << 7) | bytes[i + 1];
+      syncClockSlideFromBeats(spp);
+      i += 3;
+      continue;
+    }
+    if (status === 0xfa) {
+      clockState.running = true;
+      clockState.pausedByUser = false;
+      clockState.awaitingSync = false;
+      clockState.syncMode = null;
+      clockState.tick = 0;
+      setCrossfaderPos(0);
+      renderClockSlideStatus();
+      i += 1;
+      continue;
+    }
+    if (status === 0xfc) {
+      clockState.running = false;
+      renderClockSlideStatus();
+      i += 1;
+      continue;
+    }
+    if (status === 0xfb) {
+      clockState.running = true;
+      clockState.pausedByUser = false;
+      if (clockState.syncMode === "need_start") {
+        clockState.awaitingSync = true;
+      } else {
+        clockState.awaitingSync = false;
+        clockState.syncMode = null;
+      }
+      renderClockSlideStatus();
+      i += 1;
+      continue;
+    }
+    if (status === 0xf8) {
+      onClockSlideClockTick();
+      i += 1;
+      continue;
+    }
+    if (status >= 0xf0) {
+      i += 1;
+      continue;
+    }
+    break;
+  }
+}
+
+function renderClockSlideControls() {
+  if (el.clockSlide) el.clockSlide.checked = clockSlideCfg.enabled;
+  if (el.clockBars) el.clockBars.value = String(clockSlideCfg.bars);
+  renderClockSlideStatus();
+}
+
+if (el.clockSlide) {
+  el.clockSlide.addEventListener("change", () => {
+    clockSlideCfg.enabled = el.clockSlide.checked;
+    if (clockSlideCfg.enabled) {
+      armClockSlideOnEnable();
+      toast(
+        isTransportActive()
+          ? `Clock slide · syncing at next bar 1 (${clockSlideCfg.bars} bars)`
+          : `Clock slide · ${clockSlideCfg.bars} bars — press Play to sync`
+      );
+    }
+    saveClockSlideCfg();
+    renderClockSlideStatus();
+  });
+}
+if (el.clockBars) {
+  el.clockBars.addEventListener("change", () => {
+    clockSlideCfg.bars = clamp(Math.round(Number(el.clockBars.value)) || 8, 1, 64);
+    el.clockBars.value = String(clockSlideCfg.bars);
+    saveClockSlideCfg();
+    renderClockSlideStatus();
+  });
+}
 
 el.captureBase.addEventListener("click", () => {
   captureBaseline({ explicit: true });
@@ -992,11 +1477,11 @@ el.activeScene.addEventListener("change", () => {
 
 el.search.addEventListener("input", renderResults);
 
-el.sliderMode.value = sliderMode;
-el.sliderMode.addEventListener("change", () => {
-  sliderMode = el.sliderMode.value;
-  localStorage.setItem(SLIDER_MODE_KEY, sliderMode);
-  toast(`Crossfader takeover: ${sliderMode}`);
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && paramLearnSceneId) {
+    cancelParamLearn();
+    toast("Learn cancelled");
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -1007,6 +1492,15 @@ function ingestParameters(list) {
   liveParams = list;
   liveByIndex.clear();
   for (const p of list) liveByIndex.set(p.index, p);
+  if (paramLearnSceneId && paramLearnBaseline) {
+    const updates = list
+      .filter((p) => {
+        const base = paramLearnBaseline.get(p.index);
+        return base !== undefined && Math.abs(p.value - base) > PARAM_LEARN_EPS;
+      })
+      .map((p) => ({ index: p.index, value: p.value }));
+    tryParamLearnFromUpdates(updates);
+  }
   validateScenes();
 }
 
@@ -1018,6 +1512,7 @@ function applyParamUpdates(updates) {
       if (u.display !== undefined) p.display = u.display;
     }
   }
+  tryParamLearnFromUpdates(updates);
   updateLiveReadouts();
 }
 
@@ -1055,6 +1550,8 @@ function connectWs() {
       }
     } else if (msg.type === "param_updates") {
       applyParamUpdates(msg.data);
+    } else if (msg.type === "midi") {
+      handleIncomingMidi(msg.port, msg.data, "host");
     }
   };
   ws.onclose = () => setTimeout(connectWs, 2000);
@@ -1064,12 +1561,13 @@ function connectWs() {
 // The device picker + connection status live in the shared global header
 // (device-header.js). We only care which plugin is loaded, to namespace stored
 // scenes. The header broadcasts selector data on every poll and on switches.
-function onSelector(data) {
+async function onSelector(data) {
   const loaded = data.loaded_plugin || null;
   if (loaded !== plugin) {
+    cancelParamLearn();
     plugin = loaded;
-    restorePatternSel(); // remember the pattern last edited for this plugin
-    load(); // load scenes for this plugin + pattern namespace
+    restorePatternSel();
+    await load();
     renderAll();
   }
 }
@@ -1103,20 +1601,17 @@ el.patternNum.addEventListener("change", () =>
 );
 
 // ---------------------------------------------------------------------------
-// MIDI control of the crossfader (Web MIDI API)
-//
-// Supports two controller styles:
-//   absolute   — a normal 0–127 fader/knob; value maps straight to fader pos
-//   rel-signed — endless encoder, two's-complement (1..63 = +, 127..65 = −)
-//   rel-offset — endless encoder, 64-centred (65 = +1, 63 = −1)
-// MIDI moves drive the same morph engine + takeover modes as the on-screen
-// fader: a turn/move starts a grab (anchoring the live values) and ends after a
-// short idle, so Pickup/Scale reconcile exactly as they do for mouse drags.
+// MIDI — primary path is the ob-host WebSocket (system ports via midir, no
+// browser permission). Optional Web MIDI fallback for localhost + Chrome/Edge.
 // ---------------------------------------------------------------------------
 
+const WEB_MIDI_KEY = "ob-scenes:web-midi";
 const MIDI_KEY = "ob-scenes:midi";
+let hostDebugMode = false;
+let hostMidiPorts = [];
+let hostMidiReady = false;
+let webMidiEnabled = false;
 let midiAccess = null;
-let midiInput = null; // currently connected MIDIInput
 let midiLearning = false;
 let midiGestureActive = false;
 let midiIdleTimer = null;
@@ -1141,12 +1636,9 @@ function saveMidiCfg() {
   }
 }
 
-// Program Change follow — the device's only live signal of the active pattern.
-// Elektron devices send a Program Change (0–127) when the pattern changes
-// (requires "Program Change Send" enabled on the device). PC n maps to bank
-// floor(n/16) + pattern (n mod 16): PC 0 → A01, PC 16 → B01, … PC 127 → H16.
 const PC_KEY = "ob-scenes:pc-follow";
-let pcInput = null; // currently connected MIDIInput for program change
+let lastPcKey = ""; // dedupe back-to-back identical PCs
+let lastPcAt = 0;
 
 let pcCfg = (() => {
   const def = { inputId: null, enabled: false };
@@ -1171,141 +1663,174 @@ function setPcStatus(msg) {
   if (el.pcStatus) el.pcStatus.textContent = msg;
 }
 
-function midiMapLabel() {
-  if (midiCfg.cc === null) return "no control mapped";
-  const ch = midiCfg.channel === null ? "any" : midiCfg.channel + 1;
-  return `CC ${midiCfg.cc} · ch ${ch}`;
-}
-
-function setMidiStatus(msg) {
-  if (el.midiStatus) el.midiStatus.textContent = msg;
-}
-
-async function initMidi() {
-  el.midiMode.value = midiCfg.mode;
-  el.midiStep.value = String(midiCfg.step);
-  el.pcFollow.checked = pcCfg.enabled;
-  if (!navigator.requestMIDIAccess) {
-    setMidiStatus("Web MIDI not supported in this browser");
-    el.midiInput.disabled = true;
-    el.midiLearn.disabled = true;
-    el.pcInput.disabled = true;
-    el.pcFollow.disabled = true;
-    setPcStatus("Web MIDI not supported — select pattern manually");
+function updatePcFollowStatus() {
+  if (!pcCfg.enabled) {
+    setPcStatus("Program Change follow off");
     return;
   }
-  try {
-    midiAccess = await navigator.requestMIDIAccess({ sysex: false });
-  } catch (e) {
-    console.warn("MIDI access denied", e);
-    setMidiStatus("MIDI access denied");
+  if (!pcCfg.inputId) {
+    setPcStatus("Select the Digitakt port in the header MIDI selector");
     return;
   }
-  midiAccess.onstatechange = populateMidiInputs;
-  populateMidiInputs();
-  if (midiCfg.inputId) connectMidiInput(midiCfg.inputId);
-  if (pcCfg.enabled && pcCfg.inputId) connectPcInput(pcCfg.inputId);
+  const label = inputLabel(pcCfg.inputId) || pcCfg.inputId;
+  setPcStatus(`Following PC on ${label} · now ${patternKey()}`);
 }
 
-function populateMidiInputs() {
-  const inputs = midiAccess ? [...midiAccess.inputs.values()] : [];
-  const current = midiCfg.inputId || "";
-  el.midiInput.innerHTML = '<option value="">Off</option>';
-  for (const inp of inputs) {
-    const opt = document.createElement("option");
-    opt.value = inp.id;
-    opt.textContent = inp.name || inp.id;
-    el.midiInput.appendChild(opt);
-  }
-  // keep the saved selection if the device is still present
-  el.midiInput.value = inputs.some((i) => i.id === current) ? current : "";
-  if (midiCfg.inputId && el.midiInput.value !== midiCfg.inputId) {
-    setMidiStatus("Saved MIDI device not connected");
-  } else if (!midiInput) {
-    setMidiStatus(inputs.length ? "MIDI off" : "No MIDI inputs found");
-  }
+function hostPortLabel(id) {
+  const p = hostMidiPorts.find((x) => x.id === id);
+  return p ? p.name : null;
+}
 
-  // Same input list drives the Program Change follow selector.
-  const pcCurrent = pcCfg.inputId || "";
-  el.pcInput.innerHTML = '<option value="">Off</option>';
-  for (const inp of inputs) {
-    const opt = document.createElement("option");
-    opt.value = inp.id;
-    opt.textContent = inp.name || inp.id;
-    el.pcInput.appendChild(opt);
+function webPortLabel(id) {
+  if (!id?.startsWith("web:") || !midiAccess) return null;
+  const inp = midiAccess.inputs.get(id.slice(4));
+  return inp ? inp.name || inp.id : null;
+}
+
+function inputLabel(id) {
+  if (!id) return null;
+  return webPortLabel(id) || hostPortLabel(id) || id;
+}
+
+function portSelected(port, selectedId) {
+  if (!selectedId || !port) return false;
+  if (selectedId.startsWith("web:")) {
+    if (!midiAccess) return false;
+    const inp = midiAccess.inputs.get(selectedId.slice(4));
+    if (!inp) return false;
+    const webName = inp.name || inp.id;
+    return port === webName || port === inp.id || port.includes(webName) || webName.includes(port);
   }
-  el.pcInput.value = inputs.some((i) => i.id === pcCurrent) ? pcCurrent : "";
-  if (pcCfg.enabled && pcCfg.inputId && el.pcInput.value === pcCfg.inputId) {
-    connectPcInput(pcCfg.inputId);
+  return port === selectedId || port.includes(selectedId) || selectedId.includes(port);
+}
+
+function portIdFromName(port, source) {
+  if (source === "web" && midiAccess) {
+    for (const inp of midiAccess.inputs.values()) {
+      if (port === inp.name || port === inp.id) return `web:${inp.id}`;
+    }
+  }
+  for (const inp of hostMidiPorts) {
+    if (port === inp.name || port === inp.id) return inp.id;
+  }
+  return null;
+}
+
+function portMatchesAnyHostPort(port) {
+  if (!port) return false;
+  return hostMidiPorts.some(
+    (h) =>
+      port === h.name ||
+      port === h.id ||
+      port.includes(h.name) ||
+      h.name.includes(port)
+  );
+}
+
+function hostPortIdForPortName(port) {
+  if (!port) return null;
+  const h = hostMidiPorts.find(
+    (x) =>
+      port === x.name ||
+      port === x.id ||
+      port.includes(x.name) ||
+      x.name.includes(port)
+  );
+  return h ? h.id : null;
+}
+
+function resolveMidiPortId(selectedId) {
+  if (!selectedId?.startsWith("web:")) return selectedId;
+  const name = webPortLabel(selectedId);
+  if (name && isRedundantWebMidi(name, "web")) {
+    return hostPortIdForPortName(name) || selectedId;
+  }
+  return selectedId;
+}
+
+function isRedundantWebMidi(port, source) {
+  return source === "web" && hostMidiReady && portMatchesAnyHostPort(port);
+}
+
+function handleIncomingMidi(port, data, source) {
+  const bytes = data instanceof Uint8Array ? [...data] : [...(data || [])];
+  if (isRedundantWebMidi(port, source)) return;
+
+  if (hostDebugMode) appendMidiLogLine(`[${source}] ${port}`, bytes);
+
+  updateMidiTransport(port, bytes);
+  handleClockSlide(port, bytes);
+
+  if (pcCfg.enabled && pcCfg.inputId && portSelected(port, pcCfg.inputId)) {
+    handleProgramChange(bytes);
+  }
+  if ((bytes[0] & 0xf0) === 0xb0) {
+    const xfPort =
+      midiLearning || (midiCfg.inputId && portSelected(port, midiCfg.inputId));
+    if (xfPort) handleControlChange(bytes, port, source);
   }
 }
 
-function connectMidiInput(id) {
-  if (midiInput) {
-    midiInput.onmidimessage = null;
-    midiInput = null;
-  }
-  if (!id || !midiAccess) {
-    midiCfg.inputId = null;
-    saveMidiCfg();
-    setMidiStatus("MIDI off");
-    return;
-  }
-  const inp = midiAccess.inputs.get(id);
-  if (!inp) {
-    setMidiStatus("MIDI device unavailable");
-    return;
-  }
-  midiInput = inp;
-  midiInput.onmidimessage = onMidiMessage;
-  midiCfg.inputId = id;
-  saveMidiCfg();
-  setMidiStatus(`${inp.name || "MIDI"} · ${midiMapLabel()}`);
-}
-
-function connectPcInput(id) {
-  if (pcInput) {
-    pcInput.onmidimessage = null;
-    pcInput = null;
-  }
-  if (!id || !midiAccess || !pcCfg.enabled) {
-    if (!pcCfg.enabled) setPcStatus("Program Change follow off");
-    return;
-  }
-  const inp = midiAccess.inputs.get(id);
-  if (!inp) {
-    setPcStatus("MIDI device unavailable");
-    return;
-  }
-  pcInput = inp;
-  pcInput.onmidimessage = onPcMessage;
-  setPcStatus(`Following PC on ${inp.name || "MIDI"} · now ${patternKey()}`);
-}
-
-function onPcMessage(ev) {
-  const [status, d1] = ev.data;
-  if ((status & 0xf0) !== 0xc0) return; // program change only
-  if (!pcCfg.enabled) return;
+function handleProgramChange(bytes) {
+  const [status, d1] = bytes;
+  if ((status & 0xf0) !== 0xc0) return;
+  const ch = (status & 0x0f) + 1;
   const p = d1 & 0x7f;
+  const key = `${ch}:${p}`;
+  const now = performance.now();
+  if (key === lastPcKey && now - lastPcAt < 80) return;
+  lastPcKey = key;
+  lastPcAt = now;
   const bank = Math.floor(p / PATTERNS_PER_BANK) % PATTERN_BANKS;
   const num = p % PATTERNS_PER_BANK;
   setPattern(bank, num, { toast: false });
-  setPcStatus(`PC ${p} → ${patternKey()}`);
+  if (clockSlideCfg.enabled) resetClockSlideSequence();
+  setPcStatus(`PC ch${ch} · ${p} → ${patternKey()}`);
 }
 
-function onMidiMessage(ev) {
-  const [status, d1, d2] = ev.data;
-  if ((status & 0xf0) !== 0xb0) return; // control change only
+function midiMapLabel() {
+  if (midiCfg.cc === null) return "Crossfader not mapped";
+  const ch = midiCfg.channel === null ? "any ch" : `ch ${midiCfg.channel + 1}`;
+  return `${ch} · CC ${midiCfg.cc}`;
+}
+
+function renderMidiConfig() {
+  const label = midiMapLabel();
+  if (el.midiConfigMeta) el.midiConfigMeta.textContent = label;
+  if (el.midiMapDisplay) {
+    if (midiCfg.cc === null) {
+      el.midiMapDisplay.textContent = "Not mapped — click Learn and move your fader or encoder.";
+    } else {
+      const inp = inputLabel(midiCfg.inputId) || "any input";
+      const ch = midiCfg.channel === null ? "any" : midiCfg.channel + 1;
+      el.midiMapDisplay.textContent = `${inp} · channel ${ch} · CC ${midiCfg.cc} · ${midiCfg.mode}`;
+    }
+  }
+  if (el.midiMode) el.midiMode.value = midiCfg.mode;
+  if (el.midiStep) el.midiStep.value = String(midiCfg.step);
+  if (el.xfMidiInput && midiCfg.inputId) {
+    const ids = [...el.xfMidiInput.options].map((o) => o.value);
+    if (ids.includes(midiCfg.inputId)) el.xfMidiInput.value = midiCfg.inputId;
+  }
+}
+
+function handleControlChange(bytes, port, source) {
+  const [status, d1, d2] = bytes;
   const channel = status & 0x0f;
 
   if (midiLearning) {
     midiCfg.channel = channel;
     midiCfg.cc = d1;
+    const id = portIdFromName(port, source);
+    if (id) midiCfg.inputId = id;
     midiLearning = false;
-    el.midiLearn.classList.remove("sc-btn-active");
-    el.midiLearn.textContent = "Learn";
+    if (el.midiLearn) {
+      el.midiLearn.classList.remove("sc-btn-active");
+      el.midiLearn.textContent = "Learn";
+    }
     saveMidiCfg();
-    setMidiStatus(`Mapped ${midiMapLabel()}`);
+    refreshMidiPortSelects();
+    renderMidiConfig();
     toast(`Crossfader ← ${midiMapLabel()}`);
     return;
   }
@@ -1343,9 +1868,8 @@ function midiCommitPos() {
   applyCrossfade();
 }
 
-// Absolute fader: the first message of a gesture only syncs the anchor (so an
-// out-of-sync physical fader doesn't lurch), then subsequent moves morph.
 function midiApplyAbsolute(pos) {
+  pauseClockSlideManual();
   pos = clamp(pos, 0, 1);
   if (!xfGrab) {
     crossfader.pos = pos;
@@ -1360,8 +1884,8 @@ function midiApplyAbsolute(pos) {
   midiResetIdle();
 }
 
-// Endless encoder: nudge the fader from its current position by the decoded step.
 function midiApplyRelative(step) {
+  pauseClockSlideManual();
   if (!xfGrab) {
     beginXfGrab();
     midiGestureActive = true;
@@ -1371,33 +1895,286 @@ function midiApplyRelative(step) {
   midiResetIdle();
 }
 
-el.midiInput.addEventListener("change", () => connectMidiInput(el.midiInput.value));
+// ---------------------------------------------------------------------------
+// MIDI message log (host WebSocket + optional Web MIDI)
+// ---------------------------------------------------------------------------
 
-el.pcInput.addEventListener("change", () => {
-  pcCfg.inputId = el.pcInput.value || null;
+const MIDI_LOG_MAX = 400;
+const midiLogTapped = new Map();
+let midiLogCount = 0;
+let midiLogPaused = false;
+
+function midiLogActive() {
+  return hostDebugMode && el.midiLog?.open && !midiLogPaused;
+}
+
+function detachWebMidiLogTaps() {
+  for (const { inp, handler } of midiLogTapped.values()) {
+    inp.removeEventListener("midimessage", handler);
+  }
+  midiLogTapped.clear();
+}
+
+function setHostDebugMode(debug) {
+  hostDebugMode = !!debug;
+  if (el.midiLog) el.midiLog.hidden = !hostDebugMode;
+  if (!hostDebugMode) {
+    clearMidiLog();
+    detachWebMidiLogTaps();
+  } else if (webMidiEnabled) {
+    syncWebMidiLogTaps();
+  }
+}
+
+async function fetchHostDebugMode() {
+  try {
+    const res = await fetch("/api/status");
+    if (!res.ok) return;
+    const data = await res.json();
+    setHostDebugMode(data.debug);
+  } catch (e) {
+    console.warn("host status failed", e);
+  }
+}
+
+function describeMidiBytes(data) {
+  if (!data.length) return { kind: "other", label: "(empty)" };
+  const status = data[0];
+  const hi = status & 0xf0;
+  const ch = (status & 0x0f) + 1;
+  if (hi === 0x80 && data.length >= 3) return { kind: "other", label: `Note Off · ch ${ch} · note ${data[1]} · vel ${data[2]}` };
+  if (hi === 0x90 && data.length >= 3) return { kind: "other", label: `Note On · ch ${ch} · note ${data[1]} · vel ${data[2]}` };
+  if (hi === 0xa0 && data.length >= 3) return { kind: "other", label: `Poly AT · ch ${ch} · note ${data[1]} · ${data[2]}` };
+  if (hi === 0xb0 && data.length >= 3) return { kind: "cc", label: `CC · ch ${ch} · cc ${data[1]} = ${data[2]}` };
+  if (hi === 0xc0 && data.length >= 2) return { kind: "pc", label: `Program Change · ch ${ch} → ${data[1]}` };
+  if (hi === 0xd0 && data.length >= 2) return { kind: "other", label: `Channel AT · ch ${ch} · ${data[1]}` };
+  if (hi === 0xe0 && data.length >= 3) {
+    const val = (data[2] << 7) | data[1];
+    return { kind: "other", label: `Pitch Bend · ch ${ch} → ${val}` };
+  }
+  if (status === 0xf0) return { kind: "other", label: "SysEx start" };
+  if (status === 0xf2) return { kind: "other", label: "Song Position" };
+  if (status === 0xf8) return { kind: "other", label: "Clock" };
+  if (status === 0xfa) return { kind: "other", label: "Start" };
+  if (status === 0xfb) return { kind: "other", label: "Continue" };
+  if (status === 0xfc) return { kind: "other", label: "Stop" };
+  if (status >= 0xf0) return { kind: "other", label: `System · 0x${status.toString(16)}` };
+  return { kind: "other", label: "Data" };
+}
+
+function webMidiDiagnostics() {
+  const secure = window.isSecureContext;
+  const api = typeof navigator.requestMIDIAccess === "function";
+  const host = location.hostname;
+  const local =
+    host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+  return { secure, api, local, host };
+}
+
+function renderMidiLogMeta() {
+  if (!hostDebugMode || !el.midiLogMeta) return;
+  const { secure, api, local } = webMidiDiagnostics();
+  const hostN = hostMidiPorts.length;
+  const webN = midiAccess ? midiAccess.inputs.size : 0;
+  const state = !el.midiLog?.open ? "paused (collapsed)" : midiLogPaused ? "paused" : "recording";
+  const webHint = webMidiEnabled
+    ? ` · Web MIDI ${webN} port${webN === 1 ? "" : "s"}`
+    : !secure || !api
+      ? " · Web MIDI unavailable (need localhost/HTTPS + Chrome/Edge)"
+      : !local
+        ? " · Web MIDI needs http://127.0.0.1 (not hostname/IP)"
+        : " · Web MIDI optional";
+  el.midiLogMeta.textContent = `host ${hostN} port${hostN === 1 ? "" : "s"}${webHint} · ${midiLogCount} line${midiLogCount === 1 ? "" : "s"} · ${state}`;
+}
+
+function appendMidiLogLine(portName, data) {
+  if (!midiLogActive() || !el.midiLogLines) return;
+  const bytes = [...data];
+  const hex = bytes.map((b) => b.toString(16).padStart(2, "0")).join(" ");
+  const { kind, label } = describeMidiBytes(bytes);
+  const ts = new Date().toLocaleTimeString(undefined, {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    fractionalSecondDigits: 3,
+  });
+  const line = document.createElement("div");
+  line.className = `sc-midi-log-${kind}`;
+  line.textContent = `${ts}  ${portName}  ${hex.padEnd(20)}  ${label}`;
+  el.midiLogLines.appendChild(line);
+  midiLogCount += 1;
+  while (el.midiLogLines.childElementCount > MIDI_LOG_MAX) {
+    el.midiLogLines.removeChild(el.midiLogLines.firstChild);
+  }
+  el.midiLogLines.scrollTop = el.midiLogLines.scrollHeight;
+  renderMidiLogMeta();
+}
+
+function syncWebMidiLogTaps() {
+  if (!hostDebugMode || !midiAccess) return;
+  for (const inp of midiAccess.inputs.values()) {
+    if (midiLogTapped.has(inp.id)) continue;
+    const handler = (ev) => handleIncomingMidi(inp.name || inp.id, ev.data, "web");
+    inp.addEventListener("midimessage", handler);
+    midiLogTapped.set(inp.id, { inp, handler });
+  }
+  for (const [id, { inp, handler }] of midiLogTapped) {
+    if (!midiAccess.inputs.has(id)) {
+      inp.removeEventListener("midimessage", handler);
+      midiLogTapped.delete(id);
+    }
+  }
+  renderMidiLogMeta();
+}
+
+function clearMidiLog() {
+  midiLogCount = 0;
+  if (el.midiLogLines) el.midiLogLines.textContent = "";
+  renderMidiLogMeta();
+}
+
+if (el.midiLog) {
+  el.midiLog.addEventListener("toggle", renderMidiLogMeta);
+}
+if (el.midiLogClear) {
+  el.midiLogClear.addEventListener("click", clearMidiLog);
+}
+if (el.midiLogPause) {
+  el.midiLogPause.addEventListener("change", () => {
+    midiLogPaused = el.midiLogPause.checked;
+    renderMidiLogMeta();
+  });
+}
+
+function fillMidiPortSelect(selectEl, selectedId, opts = {}) {
+  if (!selectEl) return;
+  const emptyLabel = opts.emptyLabel ?? "Off";
+  selectEl.innerHTML = `<option value="">${emptyLabel}</option>`;
+  const seenNames = new Set();
+  for (const inp of hostMidiPorts) {
+    if (seenNames.has(inp.name)) continue;
+    seenNames.add(inp.name);
+    const opt = document.createElement("option");
+    opt.value = inp.id;
+    opt.textContent = inp.name;
+    selectEl.appendChild(opt);
+  }
+  if (webMidiEnabled && midiAccess) {
+    for (const inp of midiAccess.inputs.values()) {
+      const name = inp.name || inp.id;
+      if (isRedundantWebMidi(name, "web")) continue;
+      if (seenNames.has(name)) continue;
+      seenNames.add(name);
+      const opt = document.createElement("option");
+      opt.value = `web:${inp.id}`;
+      opt.textContent = name;
+      selectEl.appendChild(opt);
+    }
+  }
+  const ids = [...selectEl.options].map((o) => o.value);
+  selectEl.value = ids.includes(selectedId) ? selectedId : "";
+}
+
+function refreshMidiPortSelects() {
+  const pcId = resolveMidiPortId(pcCfg.inputId);
+  const xfId = resolveMidiPortId(midiCfg.inputId);
+  if (pcId !== pcCfg.inputId) {
+    pcCfg.inputId = pcId;
+    savePcCfg();
+  }
+  if (xfId !== midiCfg.inputId) {
+    midiCfg.inputId = xfId;
+    saveMidiCfg();
+  }
+  fillMidiPortSelect(el.midiInput, pcCfg.inputId);
+  fillMidiPortSelect(el.xfMidiInput, midiCfg.inputId);
+  renderClockSlideControls();
+  renderMidiLogMeta();
+  updatePcFollowStatus();
+  renderMidiConfig();
+}
+
+async function initHostMidi() {
+  el.pcFollow.checked = pcCfg.enabled;
+  try {
+    const res = await fetch("/api/midi/inputs");
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    hostMidiPorts = await res.json();
+    hostMidiReady = true;
+    refreshMidiPortSelects();
+    if (!hostMidiPorts.length) {
+      setPcStatus("No MIDI inputs seen by host — restart ob-host after connecting the Digitakt");
+    }
+  } catch (e) {
+    console.warn("host MIDI inputs failed", e);
+    hostMidiReady = false;
+    setPcStatus("Host MIDI unavailable — select pattern manually");
+  }
+  renderMidiLogMeta();
+  void tryAutoWebMidi();
+}
+
+async function enableWebMidi() {
+  const { secure, api, local } = webMidiDiagnostics();
+  if (!secure || !api) return false;
+  if (!local) return false;
+  try {
+    midiAccess = await navigator.requestMIDIAccess({ sysex: false });
+  } catch (e) {
+    console.warn("Web MIDI access denied", e);
+    return false;
+  }
+  webMidiEnabled = true;
+  try {
+    localStorage.setItem(WEB_MIDI_KEY, "1");
+  } catch (e) {
+    console.warn("web midi pref save failed", e);
+  }
+  midiAccess.onstatechange = () => {
+    syncWebMidiLogTaps();
+    refreshMidiPortSelects();
+  };
+  syncWebMidiLogTaps();
+  refreshMidiPortSelects();
+  return true;
+}
+
+async function tryAutoWebMidi() {
+  const { secure, api, local } = webMidiDiagnostics();
+  if (!secure || !api || !local) return;
+  let pref = false;
+  try {
+    pref = localStorage.getItem(WEB_MIDI_KEY) === "1";
+  } catch (e) {
+    console.warn("web midi pref load failed", e);
+  }
+  if (pref || !webMidiEnabled) await enableWebMidi();
+}
+
+el.midiInput.addEventListener("change", () => {
+  pcCfg.inputId = el.midiInput.value || null;
   savePcCfg();
-  connectPcInput(pcCfg.inputId);
+  updatePcFollowStatus();
+  renderClockSlideStatus();
 });
 
 el.pcFollow.addEventListener("change", () => {
   pcCfg.enabled = el.pcFollow.checked;
   savePcCfg();
-  if (pcCfg.enabled) {
-    if (!navigator.requestMIDIAccess) {
-      setPcStatus("Web MIDI not supported — select pattern manually");
-    } else if (pcCfg.inputId) {
-      connectPcInput(pcCfg.inputId);
-    } else {
-      setPcStatus("Select the device's MIDI input above");
-    }
-  } else {
-    connectPcInput(null);
-  }
+  updatePcFollowStatus();
+});
+
+el.xfMidiInput.addEventListener("change", () => {
+  midiCfg.inputId = el.xfMidiInput.value || null;
+  saveMidiCfg();
+  renderMidiConfig();
 });
 
 el.midiMode.addEventListener("change", () => {
   midiCfg.mode = el.midiMode.value;
   saveMidiCfg();
+  renderMidiConfig();
 });
 
 el.midiStep.addEventListener("change", () => {
@@ -1405,27 +2182,49 @@ el.midiStep.addEventListener("change", () => {
   if (Number.isFinite(v) && v > 0) {
     midiCfg.step = v;
     saveMidiCfg();
+    renderMidiConfig();
   }
 });
 
 el.midiLearn.addEventListener("click", () => {
-  if (!midiInput) {
-    setMidiStatus("Select a MIDI input first");
-    return;
-  }
   midiLearning = !midiLearning;
-  el.midiLearn.classList.toggle("sc-btn-active", midiLearning);
-  el.midiLearn.textContent = midiLearning ? "Learning…" : "Learn";
-  setMidiStatus(midiLearning ? "Move the controller to map it…" : `Mapped ${midiMapLabel()}`);
+  if (el.midiLearn) {
+    el.midiLearn.classList.toggle("sc-btn-active", midiLearning);
+    el.midiLearn.textContent = midiLearning ? "Learning…" : "Learn";
+  }
+  if (midiLearning) {
+    toast("Move the crossfader control on your MIDI device…");
+  }
+});
+
+el.midiClear.addEventListener("click", () => {
+  midiCfg.channel = null;
+  midiCfg.cc = null;
+  midiLearning = false;
+  if (el.midiLearn) {
+    el.midiLearn.classList.remove("sc-btn-active");
+    el.midiLearn.textContent = "Learn";
+  }
+  saveMidiCfg();
+  renderMidiConfig();
+  toast("Crossfader MIDI mapping cleared");
 });
 
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
 
-restorePatternSel();
-load();
-renderAll();
-initialParams();
-connectWs();
-initMidi();
+window.addEventListener("pagehide", flushScenesOnExit);
+
+(async () => {
+  restorePatternSel();
+  await fetchHostDebugMode();
+  await load();
+  void persistActivePattern();
+  renderAll();
+  initialParams();
+  connectWs();
+  initHostMidi();
+  renderMidiConfig();
+  renderClockSlideControls();
+})();

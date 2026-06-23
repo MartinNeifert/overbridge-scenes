@@ -1,0 +1,160 @@
+:root {
+  color-scheme: dark;
+  --bg: #0e0e10;
+  --surface: #1a1a1f;
+  --border: #2c2c34;
+  --text: #ececef;
+  --muted: #8b8b96;
+  --accent: #5b9fd4;
+  --accent-a: #c97a4a;
+  --accent-b: #6a9fd4;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  overscroll-behavior: none;
+}
+
+.remote-app {
+  min-height: 100%;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: max(1rem, env(safe-area-inset-top)) 1rem max(1.5rem, env(safe-area-inset-bottom));
+  gap: 1rem;
+}
+
+.remote-header {
+  width: 100%;
+  max-width: 320px;
+  text-align: center;
+}
+
+.remote-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.remote-meta {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.remote-labels {
+  width: 100%;
+  max-width: 320px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.remote-label {
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-label-a {
+  color: var(--accent-a);
+  text-align: left;
+}
+
+.remote-label-b {
+  color: var(--accent-b);
+  text-align: right;
+}
+
+.remote-readout {
+  font-size: 1.35rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.remote-track {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 240px;
+  padding: 0.5rem 0;
+}
+
+#remote-slider {
+  -webkit-appearance: slider-vertical;
+  appearance: slider-vertical;
+  width: 56px;
+  height: min(62vh, 520px);
+  margin: 0;
+  accent-color: var(--accent);
+  touch-action: none;
+}
+
+/* Fallback for browsers without vertical range */
+@supports not ((-webkit-appearance: slider-vertical) or (appearance: slider-vertical)) {
+  .remote-track {
+    height: min(62vh, 520px);
+  }
+
+  #remote-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: min(62vh, 520px);
+    height: 56px;
+    transform: rotate(-90deg);
+    transform-origin: center center;
+  }
+}
+
+.remote-jumps {
+  display: flex;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 320px;
+}
+
+.remote-btn {
+  flex: 1;
+  min-height: 48px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.remote-btn:active {
+  background: #25252c;
+}
+
+.remote-status {
+  margin: 0;
+  min-height: 1.2em;
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.remote-status.error {
+  color: #e07070;
+}

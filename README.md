@@ -5,31 +5,66 @@ Overbridge devices (Digitakt, Syntakt, Analog Heat, Analog Rytm, and others).
 A lightweight local VST3 host drives the Overbridge plugin and serves web
 control surfaces, so you can snapshot and morph parameters **without a DAW**.
 
-```
-http://127.0.0.1:7780/scenes.html
-```
+| Surface | URL | Purpose |
+|---------|-----|---------|
+| **Scenes & crossfader** | [`/scenes.html`](http://127.0.0.1:7780/scenes.html) | Full scene editor + morph |
+| **Remote crossfader** | [`/remote.html`](http://127.0.0.1:7780/remote.html) | Phone/tablet slider only |
+| **Classic control** | [`/`](http://127.0.0.1:7780/) | Browse and tweak all parameters |
+
+## Screenshots
+
+### Scenes & crossfader
+
+Pattern selection, A/B assignment, crossfader, clock slide, four scene slots,
+and parameter picker.
+
+![Scenes and crossfader control surface](docs/screenshots/scenes.png)
+
+### Remote crossfader (phone)
+
+Crossfader-only page for Wi‑Fi devices on the same network. Uses the same
+scene assignments and morph engine as the desktop UI.
+
+![Remote crossfader on phone](docs/screenshots/remote.png)
+
+### Classic parameter browser
+
+Search, pin, and adjust any plugin parameter. Useful for exploration and
+one-off tweaks.
+
+![Classic parameter control surface](docs/screenshots/classic.png)
 
 ## Features
 
 - **4 scene snapshots per pattern** — each scene stores only the parameters you
-  choose and the value each should take, exactly like an Octatrack scene.
+  choose and the value each should take, like an Octatrack scene.
 - **A/B crossfader** — assign a scene to each side and drag to morph every
-  parameter from A to B in real time. Snap buttons (`⟵ A`, `·`, `B ⟶`) too.
-- **Crossfader takeover modes** — **Jump**, **Pickup**, and **Scale** so the
-  morph reconciles gracefully with live hardware-knob moves instead of lurching.
-- **Per-pattern scenes** — scenes are namespaced per pattern (bank A–P × 1–16).
-  Switch patterns manually, or enable **Follow Program Change** to auto-switch
-  from the device's MIDI Program Change.
-- **Pattern baseline** — capture a neutral "home" snapshot per pattern, used as
-  the morph target whenever a crossfader side is empty (`— None —`). Until you
-  capture one, an empty side follows the live device value.
-- **MIDI-controllable crossfader** — map an absolute fader (0–127) or an endless
-  encoder to the crossfader from the browser (Web MIDI).
+  mapped parameter in real time. Snap buttons (`⟵ A`, `·`, `B ⟶`) too.
+- **Per-pattern scenes on disk** — saved under `data/scenes/<plugin>/<pattern>.json`
+  via the host API. Browser `localStorage` is used only as a fallback if the
+  file is missing.
+- **Pattern selection & Program Change follow** — pick bank A–P and pattern
+  1–16 manually, or enable **Follow Program Change** to auto-switch when the
+  device sends MIDI PC (Digitakt port in the header MIDI selector).
+- **Pattern baseline** — capture a neutral “home” snapshot per pattern for empty
+  crossfader sides. Until you capture one, an empty side follows the live value.
+- **Param Learn** — click **Learn** on a scene card, wiggle a hardware control,
+  and the changed parameter is added (or updated) in that scene.
+- **Clock slide** — drive the crossfader from MIDI clock over N bars (default 8),
+  synced to transport Start and bar 1. Uses the header MIDI input.
+- **MIDI crossfader mapping** — map an absolute fader (0–127) or a relative
+  encoder to the crossfader (host or Web MIDI).
+- **Remote slider** — `/remote.html` exposes only the crossfader for phones and
+  tablets on your LAN. Open `http://<your-mac>.local:7780/remote.html` (set the
+  friendly name under **System Settings → General → Sharing → Local Hostname**)
+  or use the IP logged at startup.
 - **Live, bidirectional** — hardware knob moves stream into the UI; UI changes
-  mirror to the device and the classic surface. Built-in **device monitoring**
-  keeps the analog Main Out audible.
-- **Two web surfaces + an API** — the scenes page, a classic parameter browser
-  at `/`, and a full HTTP/WebSocket/MIDI control API for your own tools.
+  mirror to the device. Built-in **device monitoring** keeps the analog Main Out
+  audible while the host is connected.
+- **Debug MIDI log** — run with `--debug` or `OB_DEBUG=1` to show a per-message
+  MIDI log in the scenes UI.
+- **Full HTTP / WebSocket / MIDI API** — everything the UI does is available
+  programmatically for your own tools.
 
 ## What this repo contains
 
@@ -44,8 +79,8 @@ proprietary software:
 | Overbridge Engine | **No** | Installed with Overbridge; `setup.sh` may copy a local reference into `vendor/` (gitignored) |
 
 Local copies created by the setup scripts live in `plugins/` and
-`vendor/Overbridge Engine.app`. Both paths are **gitignored** and stay on your
-machine.
+`vendor/Overbridge Engine.app`. Scene data is written to `data/scenes/` (also
+gitignored). Both paths stay on your machine.
 
 ## Quick start
 
@@ -66,8 +101,21 @@ RUST_LOG=info ./target/release/ob-host --plugin Digitakt
 open http://127.0.0.1:7780/scenes.html
 ```
 
-A classic parameter browser lives at `/` on the same server. For other run
-modes, CLI flags, and the architecture overview, see
+On startup the host logs LAN URLs for the remote slider, for example:
+
+```
+LAN remote crossfader: http://192.168.1.42:7780/remote.html
+LAN remote crossfader: http://digitakt.local:7780/remote.html
+```
+
+Optional flags:
+
+```bash
+# MIDI message log in the scenes UI
+RUST_LOG=info ./target/release/ob-host --plugin Digitakt --debug
+```
+
+For other run modes, CLI flags, and the architecture overview, see
 [`docs/architecture.md`](docs/architecture.md).
 
 ## Using scenes & the crossfader
@@ -76,10 +124,11 @@ modes, CLI flags, and the architecture overview, see
 
 1. Pick the scene to edit under **Add parameters to**.
 2. Search a parameter and click **＋** — it captures the current live value.
-3. Turn a knob on the hardware, then click **⤓ Map** on that row to re-snapshot
-   the live value. **Snapshot live** does this for every parameter in the scene.
-4. Fine-tune a stored value with the row slider (this edits the *scene* only —
-   it does not move the device). Remove a parameter with **✕**.
+3. Or click **Learn** on a scene card and move a hardware control — the
+   parameter that changes most is added automatically.
+4. **Snapshot live** re-captures every parameter already in the scene from the
+   device. Fine-tune a stored value with the row slider (edits the scene only,
+   not the crossfader morph). Remove a parameter with **✕**.
 5. **Recall** applies a whole scene instantly, independent of the crossfader.
 
 ### Morph
@@ -91,22 +140,36 @@ union of parameters across the two scenes is interpolated:
 - locked in only one scene → morphs that lock ↔ the baseline;
 - one side set to `— None —` → morphs the other scene ↔ the baseline.
 
-Pick a takeover mode (**Jump** / **Pickup** / **Scale**) to control how the
-morph meets live knob positions. Use **Capture baseline (pattern)** to set the
-neutral home for empty sides; otherwise an empty side follows the live value.
+Use **Capture baseline** to set the neutral home for empty sides; otherwise an
+empty side follows the live value.
 
-Scenes persist in the browser (`localStorage`), namespaced per plugin **and**
-per pattern. Full behaviour and rationale:
+Enable **Clock slide** to sweep the crossfader over N bars from MIDI clock
+(press Play on the device). Set **Bars** to match your pattern length.
+
+Scenes, baselines, and A/B assignments persist per plugin and per pattern under
+`data/scenes/`. Full behaviour and rationale:
 [`docs/designs/scenes-crossfader.md`](docs/designs/scenes-crossfader.md).
+
+### Remote slider from your phone
+
+1. Mac and phone on the same Wi‑Fi.
+2. Start `ob-host` (it listens on all interfaces, port **7780** by default).
+3. On the phone, open the LAN URL from the startup log, or
+   `http://<Local Hostname>.local:7780/remote.html`.
+4. The remote page follows the active pattern from the desktop scenes UI. Override
+   with `?pattern=B05` if needed.
 
 ## Programmatic control
 
 Everything the UI does is available over HTTP, WebSocket, and a virtual MIDI
 port — poll/set parameters, send MIDI, drive a custom controller, or batch a
-whole morph in one request. See [`docs/api-reference.md`](docs/api-reference.md).
+whole morph in one request. Scene files are exposed at
+`GET/PUT /api/scenes/{plugin}/{pattern}`. See
+[`docs/api-reference.md`](docs/api-reference.md).
 
 ```bash
 curl http://127.0.0.1:7780/api/parameters | jq '.[0:5]'
+curl http://127.0.0.1:7780/api/scenes/Digitakt/A01
 ```
 
 ## Documentation

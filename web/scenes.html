@@ -10,15 +10,24 @@
 <body>
   <header class="sc-header">
     <div class="sc-title">
-      <h1>Scenes <span class="sc-amp">&amp;</span> Crossfader</h1>
-      <p class="sc-sub">Octatrack-style scenes for Overbridge devices</p>
+      <h1>Scenes &amp; Crossfader</h1>
+      <p class="sc-sub">Overbridge scene morphing</p>
     </div>
     <div class="sc-header-right">
       <div id="ob-device-header"></div>
+      <label class="obdh-select-wrap sc-header-midi">
+        <span class="obdh-label">MIDI</span>
+        <select class="obdh-select" id="sc-midi-input" aria-label="MIDI input"
+          title="Digitakt port for Program Change follow and clock slide (host WebSocket)">
+          <option value="">Off</option>
+        </select>
+      </label>
+      <a class="sc-link" href="/remote.html" title="Crossfader-only page for phone/tablet on your Wi‑Fi">Remote slider →</a>
       <a class="sc-link" href="/">Classic control surface →</a>
     </div>
   </header>
 
+  <main class="sc-main">
   <!-- Pattern selector: scenes are stored per pattern (4 scenes each) -->
   <section class="sc-pattern-bar">
     <div class="sc-pattern-group">
@@ -26,17 +35,14 @@
       <select id="sc-pattern-bank" aria-label="Pattern bank" title="Pattern bank (A–P)"></select>
       <select id="sc-pattern-num" aria-label="Pattern number" title="Pattern number (1–16)"></select>
       <span class="sc-pattern-id" id="sc-pattern-id" title="Current pattern">A01</span>
+      <button id="sc-capture-base" class="sc-btn sc-btn-ghost sc-btn-sm" title="Snapshot the current live values as this pattern's neutral baseline — used whenever a crossfader side has no scene assigned or no value for a parameter. Saved per pattern.">Capture baseline</button>
     </div>
     <div class="sc-pattern-follow">
       <label class="sc-pattern-toggle" title="Auto-switch the active pattern when the device sends a MIDI Program Change">
         <input type="checkbox" id="sc-pc-follow" />
         <span>Follow Program Change</span>
       </label>
-      <select id="sc-pc-input" aria-label="MIDI input for program change"
-        title="MIDI input carrying the device's Program Change (select the Digitakt port)">
-        <option value="">Off</option>
-      </select>
-      <span class="sc-hint" id="sc-pc-status">4 scenes are saved per pattern</span>
+      <span class="sc-hint" id="sc-pc-status">4 scenes are saved per pattern · pick the Digitakt port in the header MIDI selector</span>
     </div>
   </section>
 
@@ -70,63 +76,97 @@
     </div>
 
     <div class="sc-xf-footer">
-      <div class="sc-xf-base">
-        <button id="sc-capture-base" class="sc-btn sc-btn-ghost" title="Snapshot the current live values as this pattern's neutral baseline — used whenever a crossfader side has no scene assigned or no value for a parameter. Saved per pattern.">Capture baseline (pattern)</button>
-        <span class="sc-hint" id="sc-base-hint">Empty crossfader side follows live until you Capture baseline (pattern). Scene sliders edit stored endpoints — the crossfader morphs between them.</span>
+      <div class="sc-xf-clock-controls">
+        <label class="sc-xf-clock-slide" title="Drive the crossfader from MIDI clock — syncs on Play (Start). Set Bars to match your pattern length.">
+          <input type="checkbox" id="sc-clock-slide" />
+          <span>Clock slide</span>
+        </label>
+        <label class="sc-xf-clock-bars" title="Bars for one full left → right sweep (4/4, 24 ticks/beat)">
+          <span class="sc-picker-label">Bars</span>
+          <input type="number" id="sc-clock-bars" min="1" max="64" step="1" value="8" />
+        </label>
       </div>
-      <div class="sc-xf-takeover">
-        <span class="sc-picker-label">Takeover</span>
-        <select id="sc-slider-mode" aria-label="Crossfader takeover mode"
-          title="How the crossfader reconciles with the live (knob-changed) values when you grab it">
-          <option value="jump">Jump</option>
-          <option value="pickup">Pickup</option>
-          <option value="scale">Scale</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="sc-xf-midi" id="sc-midi">
-      <span class="sc-picker-label">MIDI</span>
-      <select id="sc-midi-input" aria-label="MIDI input device for the crossfader"
-        title="Choose the MIDI input that controls the crossfader">
-        <option value="">Off</option>
-      </select>
-      <select id="sc-midi-mode" aria-label="MIDI controller type"
-        title="Absolute: standard 0–127 fader/knob. Relative: endless/infinite encoder">
-        <option value="absolute">Absolute (0–127)</option>
-        <option value="rel-signed">Encoder · signed</option>
-        <option value="rel-offset">Encoder · offset</option>
-      </select>
-      <label class="sc-midi-sens" title="How far each encoder tick moves the crossfader">
-        <span class="sc-picker-label">Step</span>
-        <input type="number" id="sc-midi-step" min="0.001" max="1" step="0.005" value="0.02" />
-      </label>
-      <button id="sc-midi-learn" class="sc-btn sc-btn-ghost"
-        title="Click, then move the controller to map it to the crossfader">Learn</button>
-      <span class="sc-hint" id="sc-midi-status">MIDI off</span>
+      <p class="sc-xf-clock-status sc-hint" id="sc-clock-slide-status" aria-live="polite"></p>
     </div>
   </section>
 
   <!-- Scene cards -->
-  <main class="sc-scenes" id="sc-scenes"></main>
+  <details class="sc-scenes-panel" id="sc-scenes-panel" open>
+    <summary class="sc-scenes-summary">
+      <span>Scenes</span>
+      <span class="sc-hint sc-scenes-meta" id="sc-scenes-meta"></span>
+    </summary>
+    <div class="sc-scenes" id="sc-scenes"></div>
+  </details>
 
   <!-- Parameter picker -->
-  <section class="sc-picker">
-    <div class="sc-picker-head">
-      <span class="sc-picker-label">Add parameters to</span>
-      <select id="sc-active-scene" aria-label="Scene to edit"></select>
-      <input type="search" id="sc-param-search" placeholder="Search parameters to map (e.g. Filter Cutoff)…" autocomplete="off" />
+  <details class="sc-picker-panel" id="sc-picker-panel" open>
+    <summary class="sc-picker-summary">
+      <span>Add parameters to</span>
+      <span class="sc-hint sc-picker-meta" id="sc-picker-meta"></span>
+    </summary>
+    <div class="sc-picker">
+      <div class="sc-picker-head">
+        <select id="sc-active-scene" aria-label="Scene to edit"></select>
+        <input type="search" id="sc-param-search" placeholder="Search parameters to map (e.g. Filter Cutoff)…" autocomplete="off" />
+      </div>
+      <div id="sc-param-results" class="sc-param-results"></div>
     </div>
-    <div id="sc-param-results" class="sc-param-results"></div>
-  </section>
+  </details>
 
-  <footer class="sc-footer">
-    <p class="sc-hint">
-      Workflow: pick a scene above, search a parameter and click <strong>＋</strong> to capture its current value.
-      Turn a knob on the hardware, then hit <strong>Map</strong> on that row to re-snapshot the live value.
-      Assign two scenes to <strong>A</strong>/<strong>B</strong> and drag the crossfader to morph between them.
-    </p>
-  </footer>
+  <details class="sc-midi-config-panel" id="sc-midi-config">
+    <summary class="sc-midi-config-summary">
+      <span>MIDI config</span>
+      <span class="sc-hint sc-midi-config-meta" id="sc-midi-config-meta">Crossfader not mapped</span>
+    </summary>
+    <div class="sc-midi-config-body">
+      <div class="sc-midi-config-row">
+        <span class="sc-picker-label">Crossfader input</span>
+        <select id="sc-xf-midi-input" aria-label="MIDI input for crossfader"
+          title="MIDI port carrying the crossfader CC (host or Web MIDI)">
+          <option value="">Off</option>
+        </select>
+      </div>
+      <div class="sc-midi-config-row">
+        <span class="sc-picker-label">Mode</span>
+        <select id="sc-midi-mode" aria-label="Crossfader MIDI mode"
+          title="Absolute: 0–127 fader/knob. Relative: endless encoder">
+          <option value="absolute">Absolute (0–127)</option>
+          <option value="rel-signed">Encoder · signed</option>
+          <option value="rel-offset">Encoder · offset</option>
+        </select>
+        <label class="sc-midi-config-step" title="Encoder tick size (relative modes only)">
+          <span class="sc-picker-label">Step</span>
+          <input type="number" id="sc-midi-step" min="0.001" max="1" step="0.005" value="0.02" />
+        </label>
+        <button type="button" id="sc-midi-learn" class="sc-btn sc-btn-ghost"
+          title="Click, then move the controller — channel and CC are captured automatically">Learn</button>
+        <button type="button" id="sc-midi-clear" class="sc-btn sc-btn-ghost sc-btn-sm"
+          title="Remove the crossfader MIDI mapping">Clear</button>
+      </div>
+      <p class="sc-midi-config-map" id="sc-midi-map-display">Not mapped — click Learn and move your fader or encoder.</p>
+    </div>
+  </details>
+
+  <details class="sc-midi-log" id="sc-midi-log" hidden>
+    <summary class="sc-midi-log-summary">
+      <span>MIDI message log</span>
+      <span class="sc-hint sc-midi-log-meta" id="sc-midi-log-meta">all inputs · paused when collapsed</span>
+    </summary>
+    <div class="sc-midi-log-body">
+      <div class="sc-midi-log-toolbar">
+        <button type="button" id="sc-midi-log-clear" class="sc-btn sc-btn-ghost sc-btn-sm">Clear</button>
+        <label class="sc-midi-log-pause" title="Stop appending new lines (keeps current buffer)">
+          <input type="checkbox" id="sc-midi-log-pause" />
+          <span>Pause</span>
+        </label>
+        <span class="sc-hint">Via host WebSocket (no browser MIDI permission). Program Change follow status is the hint in the Pattern bar.</span>
+      </div>
+      <pre class="sc-midi-log-lines" id="sc-midi-log-lines" aria-live="polite"></pre>
+    </div>
+  </details>
+
+  </main>
 
   <script src="device-header.js"></script>
   <script src="scenes.js"></script>

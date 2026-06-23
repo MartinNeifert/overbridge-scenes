@@ -1,4 +1,5 @@
 mod mapper;
+mod monitor;
 
 use anyhow::{Context, Result};
 use crossbeam_channel::Sender;
@@ -78,3 +79,4 @@ fn dispatch_message(cmd_tx: &Sender<HostCommand>, mapper: &mapper::MidiMapper, m
 }
 
 pub use mapper::MapperConfig;
+pub use monitor::{MidiInputPort, MidiMessageEvent, MidiMonitor};

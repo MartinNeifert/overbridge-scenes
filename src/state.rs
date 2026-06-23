@@ -12,7 +12,9 @@ use crate::config::AppConfig;
 use crate::devices;
 use crate::host::{self as plugin_host_mod, PluginHost};
 use crate::match_devices;
-use crate::midi::{MapperConfig, MidiBridge};
+use crate::midi::{MapperConfig, MidiBridge, MidiInputPort, MidiMessageEvent, MidiMonitor};
+use crate::scenes_store::ScenesStore;
+use tokio::sync::broadcast;
 
 pub struct AppState {
     host: Mutex<PluginHost>,
@@ -21,6 +23,10 @@ pub struct AppState {
     catalog: Vec<PluginInfo>,
     mappings: MapperConfig,
     midi: Mutex<Option<MidiBridge>>,
+    midi_broadcast: broadcast::Sender<MidiMessageEvent>,
+    midi_monitor: Mutex<Option<MidiMonitor>>,
+    scenes_store: ScenesStore,
+    debug: bool,
 }
 
 impl AppState {
@@ -32,6 +38,10 @@ impl AppState {
         catalog: Vec<PluginInfo>,
         mappings: MapperConfig,
         midi: Option<MidiBridge>,
+        midi_broadcast: broadcast::Sender<MidiMessageEvent>,
+        midi_monitor: Option<MidiMonitor>,
+        scenes_store: ScenesStore,
+        debug: bool,
     ) -> Self {
         Self {
             host: Mutex::new(host),
@@ -40,7 +50,35 @@ impl AppState {
             catalog,
             mappings,
             midi: Mutex::new(midi),
+            midi_broadcast,
+            midi_monitor: Mutex::new(midi_monitor),
+            scenes_store,
+            debug,
         }
+    }
+
+    pub fn debug(&self) -> bool {
+        self.debug
+    }
+
+    pub fn config(&self) -> &AppConfig {
+        &self.config
+    }
+
+    pub fn scenes_store(&self) -> &ScenesStore {
+        &self.scenes_store
+    }
+
+    pub fn midi_subscribe(&self) -> broadcast::Receiver<MidiMessageEvent> {
+        self.midi_broadcast.subscribe()
+    }
+
+    pub fn midi_input_ports(&self) -> Vec<MidiInputPort> {
+        self.midi_monitor
+            .lock()
+            .as_ref()
+            .map(|m| m.ports().to_vec())
+            .unwrap_or_default()
     }
 
     pub fn host(&self) -> parking_lot::MutexGuard<'_, PluginHost> {
@@ -279,4 +317,10 @@ pub struct StatusResponse {
     pub audio_channels: u16,
     pub devices: Vec<devices::ConnectedDevice>,
     pub plugin_matches_device: bool,
+    pub debug: bool,
+    pub api_port: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lan_ip: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lan_hostname: Option<String>,
 }

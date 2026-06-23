@@ -12,6 +12,8 @@ mod engine;
 mod host;
 mod match_devices;
 mod midi;
+mod net_util;
+mod scenes_store;
 mod state;
 
 use anyhow::{Context, Result};
@@ -91,6 +93,10 @@ struct Cli {
     /// List cpal output devices and exit
     #[arg(long)]
     list_devices: bool,
+
+    /// Enable debug UI (MIDI message log in the scenes surface)
+    #[arg(long, env = "OB_DEBUG")]
+    debug: bool,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -281,6 +287,19 @@ async fn main() -> Result<()> {
         None
     };
 
+    let (midi_tx, _) = tokio::sync::broadcast::channel(512);
+    let midi_monitor = match midi::MidiMonitor::start(midi_tx.clone()) {
+        Ok(m) => Some(m),
+        Err(e) => {
+            tracing::warn!("MIDI monitor unavailable: {e:#}");
+            None
+        }
+    };
+
+    let scenes_dir = resolve_path(PathBuf::from("data/scenes"));
+    let scenes_store = scenes_store::ScenesStore::new(scenes_dir.clone());
+    tracing::info!("Scenes store: {}", scenes_dir.display());
+
     let state = Arc::new(AppState::new(
         host,
         plugin_info.clone(),
@@ -289,12 +308,35 @@ async fn main() -> Result<()> {
         plugins,
         mappings,
         midi,
+        midi_tx,
+        midi_monitor,
+        scenes_store,
+        cli.debug,
     ));
+
+    if cli.debug {
+        tracing::info!("Debug mode: MIDI message log enabled in web UI");
+    }
 
     let web_dir = resolve_path(PathBuf::from("web"));
     let addr = format!("0.0.0.0:{}", cfg.api_port);
     tracing::info!("Control API listening on http://127.0.0.1:{}", cfg.api_port);
     tracing::info!("Web control surface: http://127.0.0.1:{}/", cfg.api_port);
+    tracing::info!("Remote crossfader: http://127.0.0.1:{}/remote.html", cfg.api_port);
+    if let Some(ip) = net_util::local_lan_ip() {
+        tracing::info!(
+            "LAN remote crossfader: http://{}:{}/remote.html",
+            ip,
+            cfg.api_port
+        );
+    }
+    if let Some(host) = net_util::local_hostname() {
+        tracing::info!(
+            "LAN remote crossfader: http://{}.local:{}/remote.html",
+            host,
+            cfg.api_port
+        );
+    }
 
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
