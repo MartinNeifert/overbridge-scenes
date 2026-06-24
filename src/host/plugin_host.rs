@@ -4,12 +4,14 @@ use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use truce_rack_core::info::{ParameterInfo, PluginInfo};
-use truce_rack_core::plugin::PluginCore;
 use truce_rack::vst3::Vst3Plugin;
+use truce_rack_core::info::{ParameterInfo, PluginInfo};
 
 use crate::host::audio::AudioEngine;
 use crate::host::audio_device::OverbridgeAudioDevice;
+use crate::host::fake_plugin::FakePlugin;
+use crate::host::param_sync_pump::ParamSyncPump;
+use crate::host::plugin_backend::{PluginInstance, SharedPlugin};
 
 #[cfg(target_os = "macos")]
 use crate::host::editor_macos::EditorPump;
@@ -45,8 +47,6 @@ pub enum HostCommand {
 /// Thread-safe parameter name → index lookup, populated at startup.
 pub type ParameterIndex = Arc<RwLock<HashMap<String, usize>>>;
 
-pub type SharedPlugin = Arc<Mutex<Vst3Plugin>>;
-
 pub struct PluginHost {
     cmd_tx: Sender<HostCommand>,
     parameters: Arc<RwLock<Vec<ParameterSnapshot>>>,
@@ -67,12 +67,14 @@ pub struct PluginHost {
     editor_pump: Option<EditorPump>,
     #[cfg(target_os = "macos")]
     gui_window: Option<GuiWindow>,
+    #[cfg(not(target_os = "macos"))]
+    sync_pump: ParamSyncPump,
     pending_ws: Arc<Mutex<Vec<(usize, f64, String)>>>,
     param_epoch: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl PluginHost {
-    pub fn start(
+    pub fn start_vst3(
         plugin: Vst3Plugin,
         audio_device: Option<OverbridgeAudioDevice>,
         block_size: usize,
@@ -85,6 +87,58 @@ impl PluginHost {
         passthru: bool,
         duplex: Option<crate::host::audio::DuplexSettings>,
     ) -> Result<Self> {
+        Self::start(
+            PluginInstance::Vst3(plugin),
+            audio_device,
+            block_size,
+            editor_open_rx,
+            param_change_rx,
+            param_refresh_rx,
+            use_gui,
+            control_only,
+            monitor,
+            passthru,
+            duplex,
+        )
+    }
+
+    pub fn start_fake(
+        editor_open_rx: Receiver<()>,
+        param_change_rx: Receiver<(u32, f64)>,
+        param_refresh_rx: Receiver<()>,
+    ) -> Result<Self> {
+        Self::start(
+            PluginInstance::Fake(FakePlugin::new()),
+            None,
+            512,
+            editor_open_rx,
+            param_change_rx,
+            param_refresh_rx,
+            false,
+            true,
+            false,
+            false,
+            None,
+        )
+    }
+
+    pub fn start(
+        plugin: PluginInstance,
+        audio_device: Option<OverbridgeAudioDevice>,
+        block_size: usize,
+        editor_open_rx: Receiver<()>,
+        param_change_rx: Receiver<(u32, f64)>,
+        param_refresh_rx: Receiver<()>,
+        use_gui: bool,
+        control_only: bool,
+        monitor: bool,
+        passthru: bool,
+        duplex: Option<crate::host::audio::DuplexSettings>,
+    ) -> Result<Self> {
+        if plugin.is_fake() && (!control_only || monitor || passthru || duplex.is_some()) {
+            anyhow::bail!("fake plugin only supports control-only mode");
+        }
+
         let plugin_info = plugin.info().clone();
         let param_count = plugin.parameter_count();
         let mut snapshots = Vec::with_capacity(param_count);
@@ -154,12 +208,19 @@ impl PluginHost {
             })
             .context("spawn audio thread")?;
 
-        // Wait for audio activation before opening the editor (Overbridge expects
-        // a live processing graph, then editor + main run loop for device IPC).
         audio_ready_rx
             .recv()
             .context("wait for audio activation")?;
         tracing::info!("Audio activated, starting main run-loop pump...");
+
+        let sync_pump = ParamSyncPump::new(
+            Arc::clone(&shared_plugin),
+            Arc::clone(&parameters),
+            Arc::clone(&pending_ws),
+            Arc::clone(&param_epoch),
+            param_flush_rx,
+            param_refresh_rx,
+        );
 
         #[cfg(target_os = "macos")]
         let skip_editor = std::env::var("OB_NO_EDITOR")
@@ -191,16 +252,15 @@ impl PluginHost {
         } else {
             Some(EditorPump::start(
                 Arc::clone(&shared_plugin),
-                Arc::clone(&parameters),
-                Arc::clone(&pending_ws),
-                Arc::clone(&param_epoch),
+                sync_pump,
                 open_editor,
                 visible_editor,
                 editor_open_rx,
-                param_flush_rx,
-                param_refresh_rx,
             )?)
         };
+
+        #[cfg(not(target_os = "macos"))]
+        let sync_pump_for_host = sync_pump;
 
         Ok(Self {
             cmd_tx,
@@ -220,6 +280,8 @@ impl PluginHost {
             editor_pump,
             #[cfg(target_os = "macos")]
             gui_window,
+            #[cfg(not(target_os = "macos"))]
+            sync_pump: sync_pump_for_host,
             pending_ws,
             param_epoch,
         })
@@ -267,14 +329,6 @@ impl PluginHost {
     }
 
     pub fn set_parameter(&self, index: usize, value: f64) -> Result<()> {
-        // Apply on the calling thread (HTTP / WS). Overbridge delivers host →
-        // device through IParameterChanges inside process(), not setParamNormalized
-        // alone (see docs/designs/overbridge-param-sync.md).
-        //
-        // Lock ordering invariant: always acquire `shared_plugin` BEFORE
-        // `parameters` (update_param_snapshot takes parameters.write() while we
-        // hold the plugin lock). Never take them in the opposite order or this
-        // will deadlock against the audio/editor threads.
         let mut p = self.shared_plugin.lock();
         p.set_parameter(index, value)
             .with_context(|| format!("set_parameter index {index}"))?;
@@ -288,8 +342,6 @@ impl PluginHost {
         Ok(())
     }
 
-    /// Apply several parameter writes under one lock, then one `process()` so
-    /// all `IParameterChanges` reach the hardware together (crossfader morphs).
     pub fn set_parameters_batch(&self, updates: &[(usize, f64)]) -> Result<()> {
         if updates.is_empty() {
             return Ok(());
@@ -354,6 +406,9 @@ impl PluginHost {
         if let Some(pump) = &self.editor_pump {
             pump.tick();
         }
+
+        #[cfg(not(target_os = "macos"))]
+        self.sync_pump.tick(ParamSyncPump::noop_pre_scan);
     }
 
     fn apply_param_value_by_id(&self, id: u32, value: f64) {
@@ -374,6 +429,10 @@ impl PluginHost {
         self.pending_ws.lock().push((index, value, display));
         self.param_epoch
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn shared_plugin(&self) -> SharedPlugin {
+        Arc::clone(&self.shared_plugin)
     }
 
     pub fn shutdown(&mut self) {

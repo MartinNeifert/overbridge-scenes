@@ -171,7 +171,7 @@ impl AppState {
             host.shutdown();
         }
 
-        let new_host = PluginHost::start(
+        let new_host = PluginHost::start_vst3(
             instance,
             plugin_host_mod::resolve_audio_device(&self.config, &info.name).ok(),
             self.config.block_size,

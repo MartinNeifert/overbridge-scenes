@@ -47,7 +47,7 @@ impl MidiBridge {
                     },
                     (),
                 )
-                .context("connect to existing MIDI port")?
+                .map_err(|e| anyhow::anyhow!("connect to existing MIDI port: {e}"))?
         } else {
             tracing::info!("Creating virtual MIDI input port: {port_name}");
             let cmd = cmd_tx.clone();
@@ -60,7 +60,7 @@ impl MidiBridge {
                     },
                     (),
                 )
-                .context("create virtual MIDI port")?
+                .map_err(|e| anyhow::anyhow!("create virtual MIDI port: {e}"))?
         };
 
         tracing::info!("MIDI bridge active on port '{port_name}'");
