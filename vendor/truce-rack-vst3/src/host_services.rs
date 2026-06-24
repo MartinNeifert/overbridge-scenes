@@ -158,6 +158,11 @@ fn notify_editor_open_request() {
     }
 }
 
+/// Inject a hardware-style `performEdit` (used by the in-process test plugin).
+pub fn simulate_perform_edit(id: ParamID, value: ParamValue) {
+    notify_param_change(id, value);
+}
+
 fn notify_param_change(id: ParamID, value: ParamValue) {
     {
         let mut hw = hardware_edits().lock().expect("hardware edits lock");

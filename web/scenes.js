@@ -9,6 +9,12 @@
 // Values are VST3-normalized (param.min..param.max, usually 0..1), so morphing
 // is a straight linear interpolation in that space.
 
+import {
+  clamp,
+  computeCrossfadeUpdates,
+  beginXfGrab as beginXfGrabState,
+} from "./scenes-morph.mjs";
+
 const STORE_PREFIX = "ob-scenes:v1:";
 const SCENE_SLOTS = 4;
 const EPS = 1e-4;
@@ -113,38 +119,6 @@ let sliderMode = (() => {
   return SLIDER_MODES.includes(stored) ? stored : "jump";
 })();
 
-// Crossfader morph value for one parameter (jump / pickup / scale soft-takeover).
-function computeMorphValue({ mode, t, t0, v0, av, bv, engaged }) {
-  const ideal = av + (bv - av) * t;
-  if (mode === "jump") return { value: ideal, engaged };
-
-  if (mode === "pickup") {
-    let nextEngaged = engaged;
-    if (!nextEngaged) {
-      const ideal0 = av + (bv - av) * t0;
-      const lo = Math.min(ideal0, ideal);
-      const hi = Math.max(ideal0, ideal);
-      if (v0 >= lo - EPS && v0 <= hi + EPS) nextEngaged = true;
-      // Live value sits outside the swept morph range — engage after a real move.
-      else if (Math.abs(t - t0) > 0.05) nextEngaged = true;
-    }
-    return { value: nextEngaged ? ideal : v0, engaged: nextEngaged };
-  }
-
-  // Scale: piecewise linear through (0, av) → (t0, v0) → (1, bv).
-  let value;
-  if (t0 <= EPS) {
-    value = v0 + (bv - v0) * t;
-  } else if (t0 >= 1 - EPS) {
-    value = t <= t0 ? av + (v0 - av) * (t / t0) : v0;
-  } else if (t <= t0) {
-    value = av + (v0 - av) * (t / t0);
-  } else {
-    value = v0 + (bv - v0) * ((t - t0) / (1 - t0));
-  }
-  return { value, engaged };
-}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -161,8 +135,28 @@ function sceneById(id) {
   return scenes.find((s) => s.id === id) || null;
 }
 
-function clamp(v, lo, hi) {
-  return Math.min(hi, Math.max(lo, v));
+function liveValuesMap() {
+  const m = new Map();
+  for (const [idx, p] of liveByIndex) m.set(idx, p.value);
+  return m;
+}
+
+function paramRangesMap() {
+  const m = new Map();
+  for (const [idx, p] of liveByIndex) {
+    m.set(idx, { min: Number.isFinite(p.min) ? p.min : 0, max: Number.isFinite(p.max) ? p.max : 1 });
+  }
+  return m;
+}
+
+function morphCtx() {
+  return {
+    baselineExplicit,
+    baseline,
+    liveValues: liveValuesMap(),
+    paramRanges: paramRangesMap(),
+    xfGrab,
+  };
 }
 
 function escapeHtml(s) {
@@ -531,50 +525,23 @@ async function setPattern(bank, num, opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Crossfader morph engine
+// Crossfader morph engine (see scenes-morph.mjs)
 // ---------------------------------------------------------------------------
 
-function unionIndices() {
-  const a = sceneById(crossfader.a);
-  const b = sceneById(crossfader.b);
-  const set = new Set();
-  if (a) for (const p of a.params) set.add(p.index);
-  if (b) for (const p of b.params) set.add(p.index);
-  return [...set];
+function beginXfGrab() {
+  xfGrab = beginXfGrabState(crossfader, scenes, morphCtx());
 }
 
-function baseValue(index) {
-  // Explicit baseline = user clicked Capture (or loaded a saved explicit capture).
-  // Auto-seeded baselines are NOT authoritative — prefer the current live reading
-  // so a hardware knob turn isn't overridden by a stale snapshot taken at load.
-  if (baselineExplicit && baseline.has(index)) return baseline.get(index);
-  const lv = liveValue(index);
-  if (lv !== undefined) return lv;
-  if (baseline.has(index)) return baseline.get(index);
-  return 0;
+function endXfGrab() {
+  xfGrab = null;
 }
 
-// Endpoint value for one side: explicit scene lock wins, otherwise the neutral
-// "empty side" value (explicit baseline, frozen grab value, or live).
-function endpointValue(scene, index) {
-  if (scene) {
-    const p = scene.params.find((x) => x.index === index);
-    if (p) return p.value;
+function applyCrossfade() {
+  const updates = computeCrossfadeUpdates(crossfader, scenes, morphCtx(), sliderMode);
+  for (const { index, value } of updates) {
+    queueApply(index, value);
   }
-  return emptySideValue(index);
-}
-
-// Value used for a crossfader side with no scene (or no value for this param).
-// Priority: an explicitly-captured pattern baseline → the live value frozen at
-// the moment the fader was grabbed (so the morph is a stable line and doesn't
-// drift as the device echoes our writes back) → the current live value → 0.
-function emptySideValue(index) {
-  if (baselineExplicit && baseline.has(index)) return baseline.get(index);
-  if (xfGrab && xfGrab.per.has(index)) return xfGrab.per.get(index).v0;
-  const lv = liveValue(index);
-  if (lv !== undefined) return lv;
-  if (baseline.has(index)) return baseline.get(index);
-  return 0;
+  flushSoon();
 }
 
 // ---------------------------------------------------------------------------
@@ -663,68 +630,6 @@ function resolveBaseline() {
   } else {
     ensureBaselineCoverage();
   }
-}
-
-// Captured when the crossfader is grabbed. Records each param's live value at
-// the moment of grab so Pickup/Scale can reconcile against where the knobs
-// actually are. We deliberately do NOT refresh the baseline here: the morph
-// trajectory (A→B) must stay fixed so Pickup has a path to sweep through the
-// live value and Scale has real endpoints to land on.
-function beginXfGrab() {
-  const a = sceneById(crossfader.a);
-  const b = sceneById(crossfader.b);
-  const per = new Map();
-  for (const index of unionIndices()) {
-    const lv = liveValue(index);
-    per.set(index, {
-      v0: lv !== undefined ? lv : baseValue(index),
-      av: endpointValue(a, index),
-      bv: endpointValue(b, index),
-      engaged: false,
-    });
-  }
-  xfGrab = { t0: crossfader.pos, per };
-}
-
-function endXfGrab() {
-  xfGrab = null;
-}
-
-function applyCrossfade() {
-  const a = sceneById(crossfader.a);
-  const b = sceneById(crossfader.b);
-  if (!a && !b) return;
-  const t = crossfader.pos;
-  // Jump = pure morph between endpoints. Pickup/Scale only during a live grab.
-  const mode = xfGrab && sliderMode !== "jump" ? sliderMode : "jump";
-  const t0 = xfGrab ? xfGrab.t0 : 0;
-
-  for (const index of unionIndices()) {
-    let value;
-    const g = mode === "jump" ? null : xfGrab.per.get(index);
-    if (g) {
-      const result = computeMorphValue({
-        mode,
-        t,
-        t0,
-        v0: g.v0,
-        av: g.av,
-        bv: g.bv,
-        engaged: g.engaged,
-      });
-      g.engaged = result.engaged;
-      value = result.value;
-    } else {
-      const av = endpointValue(a, index);
-      const bv = endpointValue(b, index);
-      value = av + (bv - av) * t;
-    }
-
-    const [min, max] = paramRange(index);
-    value = clamp(value, Math.min(min, max), Math.max(min, max));
-    queueApply(index, value);
-  }
-  flushSoon();
 }
 
 // Recall a scene outright (independent of the A/B crossfader assignment).

@@ -5,9 +5,17 @@ edition = "2021"
 description = "Local VST host for Elektron Overbridge with programmatic control API"
 license = "MIT"
 
+[lib]
+name = "overbridge_host"
+path = "src/lib.rs"
+
 [[bin]]
 name = "ob-host"
 path = "src/main.rs"
+
+[features]
+default = []
+test-support = []
 
 [dependencies]
 truce-rack = { version = "1.1.5", default-features = false, features = ["vst3"] }
@@ -27,6 +35,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive", "env"] }
 anyhow = "1"
 futures-util = "0.3"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 coreaudio-sys = { version = "0.2", features = ["audio_unit", "core_audio", "audio_toolbox"] }

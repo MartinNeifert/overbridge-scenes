@@ -195,6 +195,16 @@ RUST_LOG=info ./target/release/ob-host --plugin Digitakt --debug
 
 More run modes and architecture: [`docs/architecture.md`](docs/architecture.md).
 
+### Tests
+
+No hardware or VST bundle required — run the full suite as part of normal development:
+
+```bash
+./scripts/test.sh
+```
+
+This runs Rust tests (parameter round-trips, MIDI mapping, scenes HTTP API, fake-plugin Overbridge contract) and Node unit tests for crossfader morph math in `web/scenes-morph.mjs`. Equivalent: `cargo test -- --test-threads=1` plus `npm test`. Optional live HTTP smoke: `./scripts/test-params.sh --live`.
+
 ---
 
 ## How to use it

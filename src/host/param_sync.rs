@@ -5,10 +5,9 @@ use std::time::Duration;
 
 use parking_lot::Mutex;
 use parking_lot::RwLock;
-use truce_rack::vst3::Vst3Plugin;
 use truce_rack_vst3::{hardware_edit_active, recent_hardware_values};
-use truce_rack_core::plugin::PluginCore;
 
+use crate::host::plugin_backend::PluginInstance;
 use crate::host::plugin_host::ParameterSnapshot;
 
 const VALUE_EPSILON: f64 = 1e-5;
@@ -17,7 +16,7 @@ pub type ParamWsUpdate = (usize, f64, String);
 
 /// Refresh one entry in the host parameter cache from the plugin.
 pub fn update_param_snapshot(
-    plugin: &Vst3Plugin,
+    plugin: &mut PluginInstance,
     parameters: &Arc<RwLock<Vec<ParameterSnapshot>>>,
     index: usize,
 ) {
@@ -32,8 +31,8 @@ pub fn update_param_snapshot(
     }
 }
 
-/// Hash of `IComponent::getState` — preset/settings loads change this blob.
-pub fn plugin_state_fingerprint(plugin: &Vst3Plugin) -> Option<u64> {
+/// Hash of component/plugin state — preset/settings loads change this blob.
+pub fn plugin_state_fingerprint(plugin: &PluginInstance) -> Option<u64> {
     let component = plugin.save_state().ok()?;
     let mut hasher = DefaultHasher::new();
     component.hash(&mut hasher);
@@ -41,9 +40,9 @@ pub fn plugin_state_fingerprint(plugin: &Vst3Plugin) -> Option<u64> {
 }
 
 /// Read parameter values into the host cache. During hardware knob moves,
-/// `performEdit` values take precedence over stale `getParamNormalized` reads.
+/// `performEdit` values take precedence over stale controller reads.
 pub fn sync_params_from_plugin(
-    plugin: &mut Vst3Plugin,
+    plugin: &mut PluginInstance,
     parameters: &Arc<RwLock<Vec<ParameterSnapshot>>>,
     force: bool,
     pending_ws: Option<&Mutex<Vec<ParamWsUpdate>>>,
@@ -98,10 +97,8 @@ pub fn log_refresh_outcome(changed: usize, final_attempt: bool) {
     if changed > 0 {
         tracing::info!("Plugin parameters refreshed ({changed} changed)");
     } else if !hardware_edit_active(Duration::from_millis(800)) {
-        // Component state changed but no parameter value diverged — e.g. the
-        // editor opening, or non-parameter settings. Expected; not an error.
         tracing::debug!(
-            "Component state changed but no VST parameter values diverged \
+            "Component state changed but no parameter values diverged \
              (non-parameter state, or already in sync)"
         );
     }

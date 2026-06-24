@@ -7,11 +7,10 @@ use truce_rack_core::buffer::{AudioBuffer, BusRange};
 use truce_rack_core::bus::{Bus, BusLayout, ChannelConfig};
 use truce_rack_core::events::{Event, EventBody, EventList, MidiData};
 use truce_rack_core::plugin::{Plugin, PluginCore, ProcessContext};
-use truce_rack::vst3::Vst3Plugin;
-
 use crate::host::audio_device::{find_device_by_name, OverbridgeAudioDevice};
 use crate::host::param_sync::{sync_params_from_plugin, update_param_snapshot};
-use crate::host::plugin_host::{HostCommand, ParameterSnapshot, SharedPlugin};
+use crate::host::plugin_backend::{PluginInstance, SharedPlugin};
+use crate::host::plugin_host::{HostCommand, ParameterSnapshot};
 
 pub struct AudioEngine;
 
@@ -1060,7 +1059,7 @@ fn bus_layout_for_channels(channels: usize) -> BusLayout {
 }
 
 pub(crate) fn apply_command(
-    plugin: &mut Vst3Plugin,
+    plugin: &mut PluginInstance,
     parameters: &Arc<RwLock<Vec<ParameterSnapshot>>>,
     cmd: HostCommand,
     pending_events: &Arc<parking_lot::Mutex<Vec<Event>>>,

@@ -28,7 +28,7 @@ mod host_services;
 pub use host_services::{
     clear_hardware_edits, hardware_edit_active, host_edit_active, note_host_edit,
     recent_hardware_values, set_editor_open_notifier, set_param_change_notifier,
-    set_param_refresh_notifier,
+    set_param_refresh_notifier, simulate_perform_edit,
 };
 
 use host_services::{HostApplication, HostComponentHandler, ParameterChangesList};

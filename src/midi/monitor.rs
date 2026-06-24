@@ -75,7 +75,7 @@ impl MidiMonitor {
                     },
                     (),
                 )
-                .with_context(|| format!("connect MIDI monitor to '{name}'"))?;
+                .map_err(|e| anyhow::anyhow!("connect MIDI monitor to '{name}': {e}"))?;
             connections.push(conn);
         }
 

@@ -12,6 +12,8 @@ use truce_rack::vst3::Vst3Plugin;
 use truce_rack_core::editor::WindowHandle as PluginParent;
 use truce_rack_core::plugin::PluginCore;
 
+use crate::host::plugin_backend::SharedPlugin;
+
 const INITIAL_WINDOW: (u32, u32) = (320, 240);
 
 pub struct GuiWindow {
@@ -19,7 +21,7 @@ pub struct GuiWindow {
 }
 
 impl GuiWindow {
-    pub fn start(plugin: Arc<Mutex<Vst3Plugin>>, title: String) -> Result<Self> {
+    pub fn start(plugin: SharedPlugin, title: String) -> Result<Self> {
         Queue::main().exec_async(move || {
             if let Err(e) = run_window(plugin, title) {
                 tracing::error!("GUI window error: {e:#}");
@@ -31,7 +33,7 @@ impl GuiWindow {
     pub fn shutdown(self) {}
 }
 
-fn run_window(plugin: Arc<Mutex<Vst3Plugin>>, title: String) -> Result<()> {
+fn run_window(plugin: SharedPlugin, title: String) -> Result<()> {
     let plugin_for_handler = Arc::clone(&plugin);
     let window_opts = WindowOpenOptions {
         title,
@@ -47,7 +49,8 @@ fn run_window(plugin: Arc<Mutex<Vst3Plugin>>, title: String) -> Result<()> {
         let mut editor_size = None;
         {
             let mut guard = plugin.lock();
-            if let Some(editor) = guard.editor() {
+            let vst3 = guard.vst3_mut().context("GUI requires VST3 plugin")?;
+            if let Some(editor) = vst3.editor() {
                 if let Err(e) = editor.open(parent, 1.0) {
                     tracing::error!("editor.open failed: {e}");
                 } else {
@@ -62,8 +65,10 @@ fn run_window(plugin: Arc<Mutex<Vst3Plugin>>, title: String) -> Result<()> {
         if let Some((w, h)) = editor_size {
             window.resize(Size::new(f64::from(w), f64::from(h)));
             let mut guard = plugin.lock();
-            if let Some(editor) = guard.editor() {
-                editor.set_size(w, h);
+            if let Ok(vst3) = guard.vst3_mut() {
+                if let Some(editor) = vst3.editor() {
+                    editor.set_size(w, h);
+                }
             }
         }
 
@@ -75,14 +80,16 @@ fn run_window(plugin: Arc<Mutex<Vst3Plugin>>, title: String) -> Result<()> {
 }
 
 struct GuiHandler {
-    plugin: Arc<Mutex<Vst3Plugin>>,
+    plugin: SharedPlugin,
 }
 
 impl WindowHandler for GuiHandler {
     fn on_frame(&mut self, _window: &mut Window) {
         if let Some(mut guard) = self.plugin.try_lock() {
-            if let Some(editor) = guard.editor() {
-                editor.on_idle();
+            if let Ok(vst3) = guard.vst3_mut() {
+                if let Some(editor) = vst3.editor() {
+                    editor.on_idle();
+                }
             }
         }
     }
