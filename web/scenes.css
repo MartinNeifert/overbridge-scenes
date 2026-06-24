@@ -251,6 +251,12 @@ body {
   flex-wrap: wrap;
 }
 
+.sc-xf-takeover {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .sc-xf-clock-status {
   margin: 0;
   width: 100%;

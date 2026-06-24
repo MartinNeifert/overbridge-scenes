@@ -90,6 +90,14 @@
         </label>
         <button type="button" id="sc-clock-slide-once" class="sc-btn sc-btn-ghost sc-btn-sm"
           title="One left → right sweep over Bars, synced to the next bar 1, then stop">Once</button>
+        <label class="sc-xf-takeover" title="How the crossfader reconciles with live knob positions when you grab it">
+          <span class="sc-picker-label">Takeover</span>
+          <select id="sc-slider-mode" aria-label="Crossfader takeover mode">
+            <option value="jump">Jump</option>
+            <option value="pickup">Pickup</option>
+            <option value="scale">Scale</option>
+          </select>
+        </label>
       </div>
       <p class="sc-xf-clock-status sc-hint" id="sc-clock-slide-status" aria-live="polite"></p>
     </div>

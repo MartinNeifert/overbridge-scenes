@@ -72,6 +72,7 @@ const el = {
   clockBars: document.getElementById("sc-clock-bars"),
   clockSlideOnce: document.getElementById("sc-clock-slide-once"),
   clockSlideStatus: document.getElementById("sc-clock-slide-status"),
+  sliderMode: document.getElementById("sc-slider-mode"),
   midiInput: document.getElementById("sc-midi-input"),
   activeScene: document.getElementById("sc-active-scene"),
   pickerMeta: document.getElementById("sc-picker-meta"),
@@ -106,9 +107,43 @@ const el = {
 //               endpoints as the fader moves (a.k.a. "value scaling")
 const SLIDER_MODE_KEY = "ob-scenes:slider-mode";
 const SLIDER_MODES = ["jump", "pickup", "scale"];
-// Takeover selector hidden for now — crossfader always uses jump. Pickup/scale
-// logic in applyCrossfade() is kept for when the UI returns.
-let sliderMode = "jump";
+let sliderMode = (() => {
+  let stored = localStorage.getItem(SLIDER_MODE_KEY);
+  if (stored === "interpolate" || stored === "scale-abs") stored = "scale"; // migrate old labels
+  return SLIDER_MODES.includes(stored) ? stored : "jump";
+})();
+
+// Crossfader morph value for one parameter (jump / pickup / scale soft-takeover).
+function computeMorphValue({ mode, t, t0, v0, av, bv, engaged }) {
+  const ideal = av + (bv - av) * t;
+  if (mode === "jump") return { value: ideal, engaged };
+
+  if (mode === "pickup") {
+    let nextEngaged = engaged;
+    if (!nextEngaged) {
+      const ideal0 = av + (bv - av) * t0;
+      const lo = Math.min(ideal0, ideal);
+      const hi = Math.max(ideal0, ideal);
+      if (v0 >= lo - EPS && v0 <= hi + EPS) nextEngaged = true;
+      // Live value sits outside the swept morph range — engage after a real move.
+      else if (Math.abs(t - t0) > 0.05) nextEngaged = true;
+    }
+    return { value: nextEngaged ? ideal : v0, engaged: nextEngaged };
+  }
+
+  // Scale: piecewise linear through (0, av) → (t0, v0) → (1, bv).
+  let value;
+  if (t0 <= EPS) {
+    value = v0 + (bv - v0) * t;
+  } else if (t0 >= 1 - EPS) {
+    value = t <= t0 ? av + (v0 - av) * (t / t0) : v0;
+  } else if (t <= t0) {
+    value = av + (v0 - av) * (t / t0);
+  } else {
+    value = v0 + (bv - v0) * ((t - t0) / (1 - t0));
+  }
+  return { value, engaged };
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -636,11 +671,15 @@ function resolveBaseline() {
 // trajectory (A→B) must stay fixed so Pickup has a path to sweep through the
 // live value and Scale has real endpoints to land on.
 function beginXfGrab() {
+  const a = sceneById(crossfader.a);
+  const b = sceneById(crossfader.b);
   const per = new Map();
   for (const index of unionIndices()) {
     const lv = liveValue(index);
     per.set(index, {
       v0: lv !== undefined ? lv : baseValue(index),
+      av: endpointValue(a, index),
+      bv: endpointValue(b, index),
       engaged: false,
     });
   }
@@ -661,38 +700,24 @@ function applyCrossfade() {
   const t0 = xfGrab ? xfGrab.t0 : 0;
 
   for (const index of unionIndices()) {
-    const av = endpointValue(a, index);
-    const bv = endpointValue(b, index);
-    const ideal = av + (bv - av) * t; // absolute morph value at this position
-    let value = ideal;
-
+    let value;
     const g = mode === "jump" ? null : xfGrab.per.get(index);
     if (g) {
-      const v0 = g.v0;
-      if (mode === "pickup") {
-        // Hold the live value until the swept morph range [grab → now] reaches
-        // it, then take over. A range test (not an exact == ) tolerates the
-        // fader's discrete steps so it reliably engages on the way through.
-        if (!g.engaged) {
-          const ideal0 = av + (bv - av) * t0;
-          const lo = Math.min(ideal0, ideal);
-          const hi = Math.max(ideal0, ideal);
-          if (v0 >= lo - EPS && v0 <= hi + EPS) g.engaged = true;
-          // If the live value sits outside the swept range (common after a
-          // hardware knob move), pickup would never engage and the fader would
-          // appear dead. After a meaningful fader move, fall back to jump.
-          else if (Math.abs(t - t0) > 0.05) g.engaged = true;
-        }
-        value = g.engaged ? ideal : v0;
-      } else {
-        // scale: piecewise-linear through (t0, v0) so the value starts at the
-        // live value and still reaches each endpoint exactly.
-        if (t >= t0) {
-          value = t0 < 1 ? v0 + (bv - v0) * ((t - t0) / (1 - t0)) : v0;
-        } else {
-          value = t0 > 0 ? av + (v0 - av) * (t / t0) : v0;
-        }
-      }
+      const result = computeMorphValue({
+        mode,
+        t,
+        t0,
+        v0: g.v0,
+        av: g.av,
+        bv: g.bv,
+        engaged: g.engaged,
+      });
+      g.engaged = result.engaged;
+      value = result.value;
+    } else {
+      const av = endpointValue(a, index);
+      const bv = endpointValue(b, index);
+      value = av + (bv - av) * t;
     }
 
     const [min, max] = paramRange(index);
@@ -1632,6 +1657,21 @@ function renderClockSlideControls() {
   renderClockSlideStatus();
 }
 
+function renderSliderModeControl() {
+  if (!el.sliderMode) return;
+  el.sliderMode.value = sliderMode;
+}
+
+if (el.sliderMode) {
+  el.sliderMode.addEventListener("change", () => {
+    if (!SLIDER_MODES.includes(el.sliderMode.value)) return;
+    sliderMode = el.sliderMode.value;
+    localStorage.setItem(SLIDER_MODE_KEY, sliderMode);
+    toast(`Crossfader takeover: ${sliderMode}`);
+    if (xfGrab) applyCrossfade();
+  });
+}
+
 if (el.clockSlide) {
   el.clockSlide.addEventListener("change", () => {
     clockSlideCfg.enabled = el.clockSlide.checked;
@@ -2427,4 +2467,5 @@ window.addEventListener("pagehide", flushScenesOnExit);
   initHostMidi();
   renderMidiConfig();
   renderClockSlideControls();
+  renderSliderModeControl();
 })();
