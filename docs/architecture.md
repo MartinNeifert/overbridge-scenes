@@ -21,8 +21,8 @@ into [`designs/`](designs/).
                              │ parameter writes on the caller thread;
                              │ MIDI/macros via crossbeam command channel
 ┌────────────────────────────▼────────────────────────────────────┐
-│                   Audio Host Thread (CoreAudio/cpal)             │
-│  VST3 process() @ 48kHz · parameter delivery · MIDI injection    │
+│              Control worker + editor run-loop pump               │
+│  Edit-controller param delivery · device IPC · param sync        │
 └────────────────────────────┬────────────────────────────────────┘
                              │ VST3 parameter + MIDI bridge
 ┌────────────────────────────▼────────────────────────────────────┐
@@ -40,12 +40,14 @@ into [`designs/`](designs/).
 └───────────────────────────────────────────────────────────────────┘
 ```
 
+ob-host does **not** open the device as a CoreAudio interface. Device audio stays
+on the hardware (or in your DAW). See
+[`designs/audio-routing-and-control-options.md`](designs/audio-routing-and-control-options.md).
+
 Design references:
 
 - [`designs/vst3-hosting.md`](designs/vst3-hosting.md) — loading and driving the plugin.
 - [`designs/overbridge-param-sync.md`](designs/overbridge-param-sync.md) — host ↔ device state sync.
-- [`designs/audio-and-control-api.md`](designs/audio-and-control-api.md) — audio engine, command flow, API.
-- [`designs/audio-cutout-and-duplex-fix.md`](designs/audio-cutout-and-duplex-fix.md) — the duplex + monitoring design.
 
 ## Running the host
 
@@ -56,15 +58,7 @@ running:
 # Build once (or after code changes)
 cargo build --release
 
-# Default: control-only (no device audio path — safe alongside a DAW)
 RUST_LOG=info ./target/release/ob-host --plugin "Digitakt"
-```
-
-`config/default.json` sets `control_only: true` and `duplex.enabled: false`.
-To opt into the experimental duplex + monitoring path:
-
-```bash
-RUST_LOG=info ./target/release/ob-host --plugin "Digitakt" --duplex Digitakt
 ```
 
 URLs (same server):
@@ -84,42 +78,23 @@ pkill -f 'target/release/ob-host'
 > browser reload always picks up a rebuilt `scenes.js` / `scenes.html` (no hard
 > refresh needed).
 
-## Audio modes
-
-| Mode | Command / config | Device audio |
-|------|------------------|--------------|
-| **Control-only** (default) | `control_only: true`, `duplex.enabled: false` in config (no extra flags) | Untouched — no device audio path; hardware keeps its own mix; DAW can use Overbridge audio in parallel |
-| **Duplex + monitor** (opt-in) | `--duplex` or `duplex.enabled: true` | Analog Main Out plays USB return; host monitors device input back so the internal mix stays audible |
-| Legacy monitor | `--audio` | Plugin output routed to device (usually silent; not recommended) |
-| Passthru | `--passthru` | Loops device input back to output via cpal |
-
-**Precedence:** `--duplex` or `duplex.enabled: true` overrides control-only.
-The default config uses control-only only.
-
-Duplex config keys: `duplex.device`, `duplex.monitor`, `duplex.monitor_source`,
-`duplex.monitor_gain`. Full background:
-[`designs/audio-cutout-and-duplex-fix.md`](designs/audio-cutout-and-duplex-fix.md)
-and [`designs/audio-routing-and-control-options.md`](designs/audio-routing-and-control-options.md).
-
 ## CLI options
 
 | Flag | Description |
 |------|-------------|
 | `--plugin NAME` | Plugin name substring (Digitakt, Syntakt, …) |
-| `--duplex [DEVICE]` | Opt-in: native CoreAudio duplex on the Elektron device + monitor audio back to analog out |
-| `--control-only` | Control without opening device audio (default via config; overridden by `--duplex`) |
-| `--audio` | Legacy cpal monitor mode (plugin output to device) |
-| `--passthru` | Loop device input back to output via cpal |
 | `--list-plugins` | Scan and list available plugins |
-| `--list-devices` | List cpal output devices and exit |
 | `--port 7780` | API listen port |
 | `--plugin-dir PATH` | VST3 scan directory |
 | `--mappings PATH` | MIDI CC → parameter mapping file |
 | `--no-engine` | Don't auto-launch Overbridge Engine |
 | `--config PATH` | Host config JSON |
 | `--gui` | Open the Overbridge plugin editor window (`OB_GUI=1`) |
+| `--fake-plugin` | In-process fake plugin for headless tests (`OB_FAKE_PLUGIN=1`) |
+| `--debug` | MIDI message log in the scenes UI (`OB_DEBUG=1`) |
 
-Environment variables: `OB_PLUGIN`, `OB_PORT`, `OB_PLUGIN_DIR`.
+Environment variables: `OB_PLUGIN`, `OB_PORT`, `OB_PLUGIN_DIR`, `OB_GUI`,
+`OB_FAKE_PLUGIN`, `OB_DEBUG`.
 
 ## Project layout
 

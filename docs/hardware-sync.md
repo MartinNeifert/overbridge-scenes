@@ -34,7 +34,7 @@ lets the plugin own device communication.
 | Layer | Access | Notes |
 |-------|--------|-------|
 | **VST3 host API** | Yes | Parameters, `IComponent::getState`/`setState`, `IEditController`, component-handler callbacks |
-| **CoreAudio** | Yes | Duplex on the Overbridge device (e.g. 4 ch @ 48 kHz) |
+| **CoreAudio (device listing)** | Yes | `system_profiler` metadata for the device selector UI; ob-host does not open the device for I/O |
 | **AppKit run loop** | Yes | Hidden editor + run-loop pump so JUCE timers in `RemoteDeviceClient` run |
 | **Overbridge TCP IPC** | No | Plugin connects to Engine on localhost; protocol is proprietary |
 | **Shared memory** | No | Plugin ↔ Engine audio; not exposed to us |
@@ -46,7 +46,8 @@ lets the plugin own device communication.
 - **Hardware presets → UI** emit **no** VST3 callback; only the `getState` blob changes. We
   detect that by polling a state fingerprint, then refresh the controller with
   `component.getState()` → `controller.setComponentState(...)`.
-- **UI/MIDI → hardware** goes out via `IParameterChanges` during `process()`.
+- **UI/MIDI → hardware** goes out via the edit controller (`setParamNormalized`) and the
+  editor run-loop pump.
 
 ## Logging
 

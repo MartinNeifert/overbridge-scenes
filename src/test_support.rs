@@ -15,7 +15,7 @@ use truce_rack_core::info::PluginInfo;
 use truce_rack_vst3::{set_editor_open_notifier, set_param_change_notifier, set_param_refresh_notifier};
 
 use crate::api;
-use crate::config::{AppConfig, DuplexConfig, MidiConfig};
+use crate::config::{AppConfig, MidiConfig};
 use crate::host::PluginHost;
 use crate::midi::MapperConfig;
 use crate::scenes_store::ScenesStore;
@@ -42,12 +42,7 @@ pub fn fake_app_state_with_scenes_dir(scenes_root: PathBuf) -> Result<Arc<AppSta
         api_port: 0,
         plugin_dir: "plugins".to_string(),
         default_plugin: Some(plugin_info.name.clone()),
-        sample_rate: 48_000,
-        block_size: 128,
         overbridge_engine: String::new(),
-        audio_device: None,
-        control_only: true,
-        duplex: DuplexConfig::default(),
         midi: MidiConfig {
             enabled: false,
             virtual_port_name: "test".to_string(),

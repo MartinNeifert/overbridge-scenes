@@ -6,10 +6,9 @@ cd "$ROOT"
 
 if [[ "${1:-}" == "--live" ]]; then
   shift
-  BIN="${ROOT}/target/debug/overbridge-scenes"
-  if [[ ! -x "$BIN" ]]; then
-    cargo build --bin overbridge-scenes
-  fi
+  cargo build --bin ob-host
+  TARGET_DIR="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import sys,json; print(json.load(sys.stdin)["target_directory"])')"
+  BIN="${TARGET_DIR}/debug/ob-host"
   PORT="${OB_TEST_PORT:-3848}"
   export OB_FAKE_PLUGIN=1
   "$BIN" --fake-plugin --port "$PORT" &
@@ -22,9 +21,9 @@ if [[ "${1:-}" == "--live" ]]; then
     fi
     sleep 0.1
   done
-  curl -sf "http://127.0.0.1:${PORT}/api/status" | grep -q '"connected":true'
+  curl -sf "http://127.0.0.1:${PORT}/api/status" | grep -q 'OB Test Host'
   curl -sf -X POST "http://127.0.0.1:${PORT}/api/parameters/0" \
-    -H 'Content-Type: application/json' -d '{"value":0.5}' | grep -q '"ok":true'
+    -H 'Content-Type: application/json' -d '{"value":0.5}' | grep -q '"index":0'
   echo "live smoke ok (port ${PORT})"
 else
   exec "${ROOT}/scripts/test.sh" "$@"

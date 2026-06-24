@@ -17,7 +17,7 @@ async/audio, plus shared memory). We do **not** implement that protocol.
 | Device → host (presets) | hardware preset → UI | **no callback** — see below |
 
 > Parameter writes apply on the calling HTTP/WS thread rather than the audio command channel;
-> see [`audio-and-control-api.md`](audio-and-control-api.md) for that decision.
+> see [`audio-routing-and-control-options.md`](audio-routing-and-control-options.md) for that decision.
 
 ## Empirical findings (verified live, via `vst_handler` logging)
 

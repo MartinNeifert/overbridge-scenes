@@ -5,10 +5,8 @@ Project documentation, organized by purpose.
 ## Start here
 
 - [`../README.md`](../README.md) — feature overview and quick start.
-- [`architecture.md`](architecture.md) — layered architecture, run modes, CLI
-  flags, project layout, and development notes.
-- [`api-reference.md`](api-reference.md) — HTTP / WebSocket / MIDI control API,
-  physical-controller mapping, and client examples.
+- [`architecture.md`](architecture.md) — layered architecture, CLI flags, project layout, and development notes.
+- [`api-reference.md`](api-reference.md) — HTTP / WebSocket / MIDI control API, physical-controller mapping, and client examples.
 
 ## Structure
 
@@ -16,23 +14,17 @@ Project documentation, organized by purpose.
   later: symptoms, root-cause analysis so far, what's been tried, and leading hypotheses.
   - [`jitter-on-param-sync.md`](active-issues/jitter-on-param-sync.md) — periodic
     choppiness during parameter changes.
-  - [`audio-artifacts-duplex-monitoring.md`](active-issues/audio-artifacts-duplex-monitoring.md) —
-    clicks/dropouts in the `--duplex` monitor path (resolved: monitoring decoupled
-    from the plugin lock), with remaining optional optimizations.
 
 - **[`designs/`](designs/)** — design decisions and the reasoning ("why"), so the
   architecture is understandable without re-deriving it from the code.
   - [`vst3-hosting.md`](designs/vst3-hosting.md) — how plugins are loaded and driven.
   - [`overbridge-param-sync.md`](designs/overbridge-param-sync.md) — host ↔ device state
     sync; what Overbridge does and does not expose.
-  - [`audio-and-control-api.md`](designs/audio-and-control-api.md) — audio engine, command
-    flow, HTTP/WS/MIDI API.
   - [`audio-routing-and-control-options.md`](designs/audio-routing-and-control-options.md) —
-    keeping program audio in the box vs. ob-host's control-plane audio loop, and why hosting
-    the VST/AU plugin (ob-host) is the only full programmatic-control option.
-  - [`audio-cutout-and-duplex-fix.md`](designs/audio-cutout-and-duplex-fix.md) — why the
-    Digitakt went silent ~5 s after the host connected (Engine latency-probe fault + USB-return
-    monitoring), and the native single-AUHAL duplex + monitoring fix.
+    control-only host vs. program audio in the box, and why hosting the VST is the only
+    full programmatic-control option.
+  - [`linux-overbridge-testing.md`](designs/linux-overbridge-testing.md) — phased strategy
+    for developing on Linux (fake-plugin CI, native VST3 smoke, Wine, hardware lab).
   - [`scenes-crossfader.md`](designs/scenes-crossfader.md) — Octatrack-style scenes and the
     A/B crossfader morph engine (standalone web surface at `/scenes.html`).
 

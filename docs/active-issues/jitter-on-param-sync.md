@@ -2,24 +2,23 @@
 
 **Status:** open (implementation paused)
 **Severity:** medium — functionality works, but motion is not consistently smooth
-**Component:** `src/host/editor_macos.rs` (run-loop pump), `src/host/audio.rs` (cpal callback)
+**Component:** `src/host/editor_macos.rs` (run-loop pump), `src/host/control.rs` (command worker)
 
 ## Symptom
 
 When parameters move — in **either** direction (hardware knob → web UI, or web UI →
 hardware) — motion is mostly smooth but periodically hitches: roughly every ~2 s the
-stream of updates goes choppy for ~0.5 s, then recovers. Audio can glitch in the same
-windows.
+stream of updates goes choppy for ~0.5 s, then recovers.
 
 This persists after the first round of mitigations below; the cadence is less regular
 now but jitter is still observable.
 
 ## Architecture context
 
-Three threads contend for one `parking_lot::Mutex<Vst3Plugin>`:
+Two threads contend for one `parking_lot::Mutex` on the plugin:
 
-- **Audio thread** (cpal output callback) — locks the plugin every block
-  (128 frames @ 48 kHz ≈ **2.67 ms**) to run `process()`.
+- **Control worker** (`control.rs`) — dispatches MIDI/param commands from the API; no
+  `process()` call.
 - **Main thread** (AppKit run-loop pump, `EditorPump::tick`) — driven by the tokio
   interval at **4 ms**; pumps `NSRunLoop`, runs editor `on_idle`, polls the state
   fingerprint, and scans parameters.
@@ -28,8 +27,7 @@ Three threads contend for one `parking_lot::Mutex<Vst3Plugin>`:
 
 The plugin exposes **2115 parameters** (Analog Heat). Any "scan all parameters" pass is
 2115 × (`getParameterInfo` + `getParamNormalized` [+ `getParamStringByValue`]) COM calls
-while holding the plugin mutex. If that overlaps the audio callback's 2.67 ms deadline,
-the callback is delayed → dropout, and UI updates arrive in bursts.
+while holding the plugin mutex.
 
 ## Root causes identified so far
 
@@ -41,8 +39,6 @@ the callback is delayed → dropout, and UI updates arrive in bursts.
    also produced visible value "jumps."
 2. **250 Hz full-parameter sweep.** `sync_params_from_plugin` ran every 4 ms tick, sweeping
    all 2115 params under the plugin lock.
-3. **Non-realtime-safe scan inside the audio callback.** `audio.rs` re-read all 2115 params
-   every ~47 blocks (~125 ms) *on the audio thread itself*.
 
 ## Mitigations already applied (still jittery)
 
@@ -50,12 +46,12 @@ the callback is delayed → dropout, and UI updates arrive in bursts.
   preset detection on `hardware_edit_active || host_edit_active` (800 ms window).
 - Throttled the routine scan to ~10 Hz (`SYNC_INTERVAL_TICKS = 25`) and the post-preset
   burst scan to every 8th tick (`BURST_SYNC_STRIDE`).
-- Removed the per-callback param scan from the audio thread entirely.
+- Removed periodic full scans from any realtime path (historical audio-thread scan removed with the audio stack).
 
 ## Leading remaining hypotheses (not yet verified)
 
 - **Lock contention from the ~10 Hz full scan.** Even at 10 Hz, one pass touches 2115
-  params under the plugin mutex; a single pass can exceed the 2.67 ms audio deadline.
+  params under the plugin mutex; a single pass can still stall the editor pump.
   *Candidate fix:* chunk the scan across ticks (e.g. N params/tick), or drop the lock
   between sub-ranges; or only scan a "dirty"/pinned subset.
 - **`NSRunLoop` pump cost.** `pump_main_run_loop_once(0.001)` plus up to 3× `editor.on_idle()`
@@ -64,8 +60,7 @@ the callback is delayed → dropout, and UI updates arrive in bursts.
   the run-loop pump.
 - **`save_state()` cost on detection.** `IComponent::getState` serializes full plugin state
   (~683 bytes here, but the call may do more work internally) on the main thread under lock.
-- **cpal buffer size / scheduling.** Block size 128 is tight; the main thread is not
-  realtime-priority. The ~2 s cadence may correlate with an Overbridge engine housekeeping
+- **Engine housekeeping timers.** The ~2 s cadence may correlate with an Overbridge engine
   timer rather than our code — needs correlation against `vst_handler` logs and engine
   activity.
 
@@ -84,6 +79,6 @@ Useful next step: add timing spans around (a) the param scan, (b) the run-loop p
 ## Related code
 
 - `src/host/editor_macos.rs` — `EditorPump::tick`, fingerprint poll, scan throttle.
-- `src/host/audio.rs` — cpal duplex callback, plugin lock.
+- `src/host/control.rs` — command worker thread.
 - `src/host/param_sync.rs` — `sync_params_from_plugin`, `plugin_state_fingerprint`.
 - `vendor/truce-rack-vst3/src/host_services.rs` — `hardware_edit_active`, `host_edit_active`.

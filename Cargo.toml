@@ -21,7 +21,6 @@ test-support = []
 truce-rack = { version = "1.1.5", default-features = false, features = ["vst3"] }
 truce-rack-vst3 = { path = "vendor/truce-rack-vst3" }
 truce-rack-core = "1.1.5"
-cpal = "0.15"
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["fs", "cors", "trace", "set-header"] }
@@ -39,7 +38,6 @@ tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-coreaudio-sys = { version = "0.2", features = ["audio_unit", "core_audio", "audio_toolbox"] }
 objc2 = "0.6"
 objc2-foundation = "0.3"
 objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSView", "NSWindow"] }

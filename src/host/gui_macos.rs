@@ -49,7 +49,12 @@ fn run_window(plugin: SharedPlugin, title: String) -> Result<()> {
         let mut editor_size = None;
         {
             let mut guard = plugin.lock();
-            let vst3 = guard.vst3_mut().context("GUI requires VST3 plugin")?;
+            let Ok(vst3) = guard.vst3_mut() else {
+                tracing::error!("GUI requires VST3 plugin");
+                return GuiHandler {
+                    plugin: plugin_for_handler,
+                };
+            };
             if let Some(editor) = vst3.editor() {
                 if let Err(e) = editor.open(parent, 1.0) {
                     tracing::error!("editor.open failed: {e}");

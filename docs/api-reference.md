@@ -5,7 +5,7 @@ The host exposes an HTTP + WebSocket control API on `http://127.0.0.1:7780`
 MIDI input port. Everything the web surfaces do is available to your own code.
 
 For the design rationale behind this surface see
-[`designs/audio-and-control-api.md`](designs/audio-and-control-api.md).
+[`architecture.md`](architecture.md).
 
 ## REST
 

@@ -33,7 +33,7 @@ frame can touch dozens of parameters; batching avoids per-parameter lock churn
 and delivers the whole frame to the device together. A scene write still goes
 through the *same* apply path as a manual edit, so the classic surface, MIDI
 mappings, and the hardware all see the morph live. See
-[`audio-and-control-api.md`](audio-and-control-api.md).
+[`architecture.md`](../architecture.md).
 
 ## Data model
 

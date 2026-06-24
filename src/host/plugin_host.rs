@@ -7,8 +7,7 @@ use std::thread::{self, JoinHandle};
 use truce_rack::vst3::Vst3Plugin;
 use truce_rack_core::info::{ParameterInfo, PluginInfo};
 
-use crate::host::audio::AudioEngine;
-use crate::host::audio_device::OverbridgeAudioDevice;
+use crate::host::control::ControlEngine;
 use crate::host::fake_plugin::FakePlugin;
 use crate::host::param_sync_pump::ParamSyncPump;
 use crate::host::plugin_backend::{PluginInstance, SharedPlugin};
@@ -33,7 +32,7 @@ pub struct ParameterSnapshot {
     pub display: String,
 }
 
-/// Commands sent from the API/MIDI threads to the audio host thread.
+/// Commands sent from the API/MIDI threads to the control worker thread.
 #[derive(Debug, Clone)]
 pub enum HostCommand {
     SetParameterByName { name: String, value: f64 },
@@ -54,14 +53,9 @@ pub struct PluginHost {
     param_id_to_index: HashMap<u32, usize>,
     shared_plugin: SharedPlugin,
     param_flush_tx: Sender<()>,
-    /// When false, parameter writes are followed by `process()` so
-    /// `IParameterChanges` reach the hardware (required by Overbridge).
-    control_only: bool,
     param_change_rx: Receiver<(u32, f64)>,
     plugin_info: PluginInfo,
-    audio_device_name: String,
-    audio_channels: u16,
-    audio_handle: Option<JoinHandle<()>>,
+    control_handle: Option<JoinHandle<()>>,
     shutdown_tx: Option<Sender<()>>,
     #[cfg(target_os = "macos")]
     editor_pump: Option<EditorPump>,
@@ -76,29 +70,17 @@ pub struct PluginHost {
 impl PluginHost {
     pub fn start_vst3(
         plugin: Vst3Plugin,
-        audio_device: Option<OverbridgeAudioDevice>,
-        block_size: usize,
         editor_open_rx: Receiver<()>,
         param_change_rx: Receiver<(u32, f64)>,
         param_refresh_rx: Receiver<()>,
         use_gui: bool,
-        control_only: bool,
-        monitor: bool,
-        passthru: bool,
-        duplex: Option<crate::host::audio::DuplexSettings>,
     ) -> Result<Self> {
         Self::start(
             PluginInstance::Vst3(plugin),
-            audio_device,
-            block_size,
             editor_open_rx,
             param_change_rx,
             param_refresh_rx,
             use_gui,
-            control_only,
-            monitor,
-            passthru,
-            duplex,
         )
     }
 
@@ -109,36 +91,20 @@ impl PluginHost {
     ) -> Result<Self> {
         Self::start(
             PluginInstance::Fake(FakePlugin::new()),
-            None,
-            512,
             editor_open_rx,
             param_change_rx,
             param_refresh_rx,
             false,
-            true,
-            false,
-            false,
-            None,
         )
     }
 
     pub fn start(
         plugin: PluginInstance,
-        audio_device: Option<OverbridgeAudioDevice>,
-        block_size: usize,
         editor_open_rx: Receiver<()>,
         param_change_rx: Receiver<(u32, f64)>,
         param_refresh_rx: Receiver<()>,
         use_gui: bool,
-        control_only: bool,
-        monitor: bool,
-        passthru: bool,
-        duplex: Option<crate::host::audio::DuplexSettings>,
     ) -> Result<Self> {
-        if plugin.is_fake() && (!control_only || monitor || passthru || duplex.is_some()) {
-            anyhow::bail!("fake plugin only supports control-only mode");
-        }
-
         let plugin_info = plugin.info().clone();
         let param_count = plugin.parameter_count();
         let mut snapshots = Vec::with_capacity(param_count);
@@ -172,46 +138,32 @@ impl PluginHost {
         let param_epoch = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let (cmd_tx, cmd_rx) = unbounded();
         let (shutdown_tx, shutdown_rx) = unbounded();
-        let (audio_ready_tx, audio_ready_rx) = unbounded();
+        let (ready_tx, ready_rx) = unbounded();
         let (param_flush_tx, param_flush_rx) = unbounded();
-
-        let audio_device_name = audio_device
-            .as_ref()
-            .map(|d| d.name.clone())
-            .unwrap_or_else(|| plugin_info.name.clone());
-        let audio_channels = audio_device.as_ref().map(|d| d.channels).unwrap_or(2);
 
         let shared_plugin: SharedPlugin = Arc::new(Mutex::new(plugin));
         let param_flush_for_host = param_flush_tx.clone();
 
-        let params_for_audio = Arc::clone(&parameters);
-        let plugin_for_audio = Arc::clone(&shared_plugin);
-        let audio_handle = thread::Builder::new()
-            .name("ob-audio".into())
+        let params_for_control = Arc::clone(&parameters);
+        let plugin_for_control = Arc::clone(&shared_plugin);
+        let control_handle = thread::Builder::new()
+            .name("ob-control".into())
             .spawn(move || {
-                if let Err(e) = AudioEngine::run(
-                    plugin_for_audio,
-                    audio_device,
-                    block_size,
+                let _ = ready_tx.send(());
+                if let Err(e) = ControlEngine::run(
+                    plugin_for_control,
+                    params_for_control,
                     cmd_rx,
                     shutdown_rx,
-                    params_for_audio,
-                    audio_ready_tx,
                     param_flush_tx,
-                    control_only,
-                    monitor,
-                    passthru,
-                    duplex,
                 ) {
-                    tracing::error!("Audio engine error: {e:#}");
+                    tracing::error!("Control engine error: {e:#}");
                 }
             })
-            .context("spawn audio thread")?;
+            .context("spawn control thread")?;
 
-        audio_ready_rx
-            .recv()
-            .context("wait for audio activation")?;
-        tracing::info!("Audio activated, starting main run-loop pump...");
+        ready_rx.recv().context("wait for control thread")?;
+        tracing::info!("Plugin host ready, starting main run-loop pump...");
 
         let sync_pump = ParamSyncPump::new(
             Arc::clone(&shared_plugin),
@@ -269,12 +221,9 @@ impl PluginHost {
             param_id_to_index,
             shared_plugin,
             param_flush_tx: param_flush_for_host,
-            control_only,
             param_change_rx,
             plugin_info,
-            audio_device_name,
-            audio_channels,
-            audio_handle: Some(audio_handle),
+            control_handle: Some(control_handle),
             shutdown_tx: Some(shutdown_tx),
             #[cfg(target_os = "macos")]
             editor_pump,
@@ -307,14 +256,6 @@ impl PluginHost {
         &self.plugin_info
     }
 
-    pub fn audio_device_name(&self) -> &str {
-        &self.audio_device_name
-    }
-
-    pub fn audio_channels(&self) -> u16 {
-        self.audio_channels
-    }
-
     pub fn parameters(&self) -> Vec<ParameterSnapshot> {
         self.parameters.read().clone()
     }
@@ -333,11 +274,7 @@ impl PluginHost {
         p.set_parameter(index, value)
             .with_context(|| format!("set_parameter index {index}"))?;
         crate::host::param_sync::update_param_snapshot(&mut p, &self.parameters, index);
-        if self.control_only {
-            p.clear_pending_param_changes();
-        } else {
-            p.deliver_pending_via_process()?;
-        }
+        p.clear_pending_param_changes();
         let _ = self.param_flush_tx.try_send(());
         Ok(())
     }
@@ -352,11 +289,7 @@ impl PluginHost {
                 .with_context(|| format!("set_parameter index {index}"))?;
             crate::host::param_sync::update_param_snapshot(&mut p, &self.parameters, index);
         }
-        if self.control_only {
-            p.clear_pending_param_changes();
-        } else {
-            p.deliver_pending_via_process()?;
-        }
+        p.clear_pending_param_changes();
         let _ = self.param_flush_tx.try_send(());
         Ok(())
     }
@@ -411,7 +344,6 @@ impl PluginHost {
         self.sync_pump.tick(ParamSyncPump::noop_pre_scan);
     }
 
-    /// Apply a hardware-style knob move to the host cache (same outcome as `performEdit`).
     pub fn inject_hardware_edit(&self, id: u32, value: f64) {
         self.apply_param_value_by_id(id, value);
     }
@@ -444,7 +376,7 @@ impl PluginHost {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
-        if let Some(handle) = self.audio_handle.take() {
+        if let Some(handle) = self.control_handle.take() {
             let _ = handle.join();
         }
         #[cfg(target_os = "macos")]

@@ -10,7 +10,7 @@ use truce_rack_vst3::{set_editor_open_notifier, set_param_change_notifier, set_p
 
 use crate::config::AppConfig;
 use crate::devices;
-use crate::host::{self as plugin_host_mod, PluginHost};
+use crate::host::PluginHost;
 use crate::match_devices;
 use crate::midi::{MapperConfig, MidiBridge, MidiInputPort, MidiMessageEvent, MidiMonitor};
 use crate::scenes_store::ScenesStore;
@@ -173,31 +173,12 @@ impl AppState {
 
         let new_host = PluginHost::start_vst3(
             instance,
-            plugin_host_mod::resolve_audio_device(&self.config, &info.name).ok(),
-            self.config.block_size,
             editor_open_rx,
             param_change_rx,
             param_refresh_rx,
             false,
-            self.config.control_only,
-            false,
-            false,
-            if self.config.duplex.enabled {
-                Some(crate::host::DuplexSettings {
-                    device: if self.config.duplex.device.is_empty() {
-                        info.name.clone()
-                    } else {
-                        self.config.duplex.device.clone()
-                    },
-                    monitor: self.config.duplex.monitor,
-                    monitor_source: self.config.duplex.monitor_source,
-                    monitor_gain: self.config.duplex.monitor_gain,
-                })
-            } else {
-                None
-            },
         )
-        .context("start audio host")?;
+        .context("start plugin host")?;
 
         self.reconnect_midi(&new_host)?;
 

@@ -14,7 +14,7 @@ use truce_rack_vst3::{set_editor_open_notifier, set_param_change_notifier, set_p
 use crate::api;
 use crate::config::AppConfig;
 use crate::engine;
-use crate::host::{self, list_output_devices, resolve_audio_device, PluginHost};
+use crate::host::PluginHost;
 use crate::midi;
 use crate::net_util;
 use crate::scenes_store;
@@ -55,36 +55,9 @@ pub struct Cli {
     #[arg(long, env = "OB_GUI")]
     pub gui: bool,
 
-    /// Control-only (default): drive parameter / MIDI control without opening the
-    /// Overbridge audio device, so the hardware's own audio output is left
-    /// untouched. Use `--duplex` when you want the host to open the device.
-    #[arg(long, env = "OB_CONTROL_ONLY")]
-    pub control_only: bool,
-
-    /// Open the Overbridge audio device for monitoring (legacy cpal path;
-    /// overrides control-only)
-    #[arg(long)]
-    pub audio: bool,
-
-    /// Passthrough: open the Overbridge device and loop its captured input
-    /// straight back to its output, so the hardware keeps playing its own audio
-    /// while the host stays connected (overrides control-only)
-    #[arg(long)]
-    pub passthru: bool,
-
-    /// Optional native duplex audio: host the Elektron device as a single duplex
-    /// AUHAL and monitor its audio back to analog out. Experimental — the default
-    /// control-only path leaves device audio to the hardware (or your DAW).
-    #[arg(long, value_name = "DEVICE")]
-    pub duplex: Option<Option<String>>,
-
     /// List available plugins and exit
     #[arg(long)]
     pub list_plugins: bool,
-
-    /// List cpal output devices and exit
-    #[arg(long)]
-    pub list_devices: bool,
 
     /// Enable debug UI (MIDI message log in the scenes surface)
     #[arg(long, env = "OB_DEBUG")]
@@ -117,14 +90,6 @@ pub async fn run_with_cli(cli: Cli) -> Result<()> {
     }
 
     let plugin_dir = resolve_path(PathBuf::from(&cfg.plugin_dir));
-
-    if cli.list_devices {
-        println!("cpal output devices:");
-        for name in list_output_devices().context("list output devices")? {
-            println!("  - {name}");
-        }
-        return Ok(());
-    }
 
     if !cli.fake_plugin && !plugin_dir.exists() {
         anyhow::bail!(
@@ -193,62 +158,14 @@ pub async fn run_with_cli(cli: Cli) -> Result<()> {
             .load(plugin_info)
             .context("load VST3 plugin — is Overbridge Engine running and device connected?")?;
 
-        let monitor = cli.audio;
-        let passthru = cli.passthru;
-
-        let duplex_cli = cli.duplex.is_some();
-        let duplex = if duplex_cli || cfg.duplex.enabled {
-            let device = cli
-                .duplex
-                .flatten()
-                .filter(|s| !s.is_empty())
-                .or_else(|| Some(cfg.duplex.device.clone()).filter(|s| !s.is_empty()))
-                .unwrap_or_else(|| plugin_info.name.clone());
-            Some(host::DuplexSettings {
-                device,
-                monitor: cfg.duplex.monitor,
-                monitor_source: cfg.duplex.monitor_source,
-                monitor_gain: cfg.duplex.monitor_gain,
-            })
-        } else {
-            None
-        };
-
-        let control_only = duplex.is_none()
-            && !cli.audio
-            && !cli.passthru
-            && (cli.control_only || cfg.control_only);
-
-        let audio_device = if monitor || passthru {
-            match resolve_audio_device(&cfg, &plugin_info.name) {
-                Ok(dev) => Some(dev),
-                Err(e) => return Err(e).context("open Overbridge audio device"),
-            }
-        } else {
-            None
-        };
-
-        log_audio_mode(
-            &duplex,
-            control_only,
-            passthru,
-            monitor,
-        );
-
         let host = PluginHost::start_vst3(
             instance,
-            audio_device,
-            cfg.block_size,
             editor_open_rx,
             param_change_rx,
             param_refresh_rx,
             cli.gui,
-            control_only,
-            monitor,
-            passthru,
-            duplex,
         )
-        .context("start audio host")?;
+        .context("start plugin host")?;
 
         (plugin_info.clone(), host)
     };
@@ -351,37 +268,6 @@ pub async fn run_with_cli(cli: Cli) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn log_audio_mode(
-    duplex: &Option<host::DuplexSettings>,
-    control_only: bool,
-    passthru: bool,
-    monitor: bool,
-) {
-    if let Some(d) = duplex {
-        tracing::info!(
-            "Duplex mode: single AUHAL on \"{}\" (one device, one clock; DAW-equivalent), monitor {}",
-            d.device,
-            if d.monitor { "on" } else { "off" }
-        );
-    } else if control_only {
-        tracing::info!(
-            "Control-only mode: audio engine not engaged — control via edit controller only (no process())"
-        );
-    } else if passthru {
-        tracing::info!(
-            "Passthrough mode (--passthru): looping device audio back to itself to keep it alive while connected"
-        );
-    } else if monitor {
-        tracing::info!(
-            "Monitor mode (--audio): plugin output sent to the Overbridge device (overrides device audio)"
-        );
-    } else {
-        tracing::info!(
-            "Engine mode (default): hosting the plugin at its native multibus layout; driving process() from the device clock (silent output) when present, else a timer loop"
-        );
-    }
 }
 
 fn resolve_path(path: PathBuf) -> PathBuf {

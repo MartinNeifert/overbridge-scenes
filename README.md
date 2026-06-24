@@ -101,88 +101,30 @@ machine — all gitignored.
 
 ---
 
-## Audio routing (experimental)
+## Audio routing
 
-> **Not performance-ready on the optional duplex path.** The web UI and API are
-> the main product. Audio hosting exists for advanced setups; the default
-> **control-only** path does not open the device audio stream at all.
-
-The web UI and API are the main product. By default the host drives parameters
-through the edit controller only — the same reason a DAW keeps the plugin
-loaded, but without touching the device's USB audio return.
-
-### Signal path (default: control-only)
+ob-host is **control-only**. It never opens the Elektron as a CoreAudio device
+and never writes to the USB audio return — so analog Main Out stays on the
+hardware's own mix, and a DAW can use Overbridge USB audio in parallel.
 
 ```text
   Web UI / HTTP / WebSocket / MIDI
               │
               ▼
-         ob-host (VST3 host, control-only)
+         ob-host (VST3 host)
               │
               ▼
     Elektron Overbridge VST3 plugin  ──►  Overbridge Engine  ──USB──►  device
                                               (params / MIDI only)
 
-  Device audio: analog Main Out ←── hardware's own mix (untouched by ob-host)
-  DAW audio:   Ableton / etc. can use Overbridge USB channels in parallel
+  Device audio: analog Main Out ←── hardware mix (or your DAW's Overbridge I/O)
 ```
 
-### Default: control-only
-
-Out of the box (`control_only: true`, `duplex.enabled: false` in
-`config/default.json`), `ob-host` **does not** open the Elektron as an audio
-device:
-
-| Path | What it does |
-|------|----------------|
-| **Control** | The VST3 plugin + Engine carry parameter and MIDI changes to the box via the edit controller. |
-| **Device audio** | Untouched — analog Main Out stays on the hardware's own mix. |
-| **Alongside a DAW** | Run Overbridge audio in Ableton (or similar) while ob-host handles scenes/crossfader — no fight over the USB return. |
-
-```bash
-RUST_LOG=info ./target/release/ob-host --plugin Digitakt
-```
-
-Startup logs:
-
-```
-Control-only mode: audio engine not engaged — control via edit controller only (no process())
-```
-
-### Optional: duplex + monitoring
-
-When you want ob-host itself to open the device audio path (experimental), pass
-`--duplex` or set `duplex.enabled: true` in config. The host opens a **single
-CoreAudio duplex** AUHAL and monitors device input back to the USB return so
-analog Main Out stays audible while connected:
-
-```bash
-RUST_LOG=info ./target/release/ob-host --plugin Digitakt --duplex
-```
-
-Tunable in config: `duplex.device`, `duplex.monitor`, `duplex.monitor_source`,
-`duplex.monitor_gain`. See
-[`docs/designs/audio-cutout-and-duplex-fix.md`](docs/designs/audio-cutout-and-duplex-fix.md).
-
-**Mode precedence:** `--duplex` or `duplex.enabled: true` overrides control-only.
-To return to control-only after enabling duplex in config, set
-`duplex.enabled: false` (and keep `control_only: true`).
-
-### Known rough edges (duplex path only)
-
-These apply when `duplex.enabled: true` or `--duplex` — not in the default
-control-only mode:
-
-- Real-time safety is best-effort: the audio callback uses `try_lock()` on the
-  plugin; heavy param sync or editor work can still cause **lock-skips** and brief
-  artifacts on the monitor path.
-- Parameter sync and crossfader morphs share the same plugin — fast morphs can
-  interact with [param-sync jitter](docs/active-issues/jitter-on-param-sync.md).
-- Duplex monitoring has had [click/dropout issues](docs/active-issues/audio-artifacts-duplex-monitoring.md)
-  that are largely mitigated but not “DAW-grade” yet.
+Parameters are delivered through the edit controller (same path as the plugin
+GUI), driven by the hidden editor + main run-loop pump. No `process()` call,
+no host audio thread.
 
 More detail: [`docs/architecture.md`](docs/architecture.md) ·
-[`docs/designs/audio-cutout-and-duplex-fix.md`](docs/designs/audio-cutout-and-duplex-fix.md) ·
 [`docs/designs/audio-routing-and-control-options.md`](docs/designs/audio-routing-and-control-options.md)
 
 ---

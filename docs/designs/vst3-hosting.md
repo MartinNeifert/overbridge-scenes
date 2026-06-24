@@ -43,18 +43,16 @@ Overbridge uses the separate edit-controller model (component/processor and
   messages on a preset change (verified via `vst_handler` logging). See
   `overbridge-param-sync.md`.
 
-## Parameter delivery: `IParameterChanges` in `process()`, plus controller set
+## Parameter delivery: edit controller (control-only host)
 
-`Vst3Plugin::set_parameter` does three things:
+`Vst3Plugin::set_parameter` calls `controller.setParamNormalized` (with host-edit
+brackets) so the controller state matches immediately. ob-host does not call
+`process()` or deliver `IParameterChanges` — the hidden editor + run-loop pump
+carry changes to the device over Overbridge's IPC.
 
-1. Queues the change for delivery via `IParameterChanges` on the next `process()` call
-   (`pending_param_changes`, coalesced to the latest value per ID).
-2. Brackets it with `IEditControllerHostEditing::beginEditFromHost`/`endEditFromHost`.
-3. Calls `controller.setParamNormalized` so the controller state matches immediately.
-
-- **Why all three:** Overbridge expects sample-accurate parameter delivery through
-  `IParameterChanges` (so the device hears it), but the controller's `getParamNormalized`
-  must also reflect it for the host's readback/UI. Doing both keeps audio and UI consistent.
+- **Why:** Opening the device audio path fights with a DAW and overrides USB-return
+  audio. Control-only keeps program audio on the hardware or in the DAW while scenes
+  and the crossfader still work.
 
 ## Editor is opened (hidden) on the main thread
 
@@ -68,11 +66,11 @@ and pump `NSRunLoop` (`editor_macos.rs`).
 
 ## Threading model
 
-- One audio thread (cpal) owns `process()` under `Mutex<Vst3Plugin>`.
-- One main thread pumps the run loop and polls/scuns parameters (also under the mutex,
-  via `try_lock` so it never blocks the audio thread).
-- API/MIDI threads send `HostCommand`s over a crossbeam channel to the audio thread, and
-  read a separate `RwLock<Vec<ParameterSnapshot>>` cache for responses.
+- One control worker thread dispatches `HostCommand`s from the API/MIDI layer.
+- One main thread pumps the editor run loop and polls/scans parameters (under the plugin
+  mutex via `try_lock` where applicable).
+- Parameter writes from the API go through the edit controller on the caller thread;
+  the snapshot cache is a separate `RwLock`.
 - **Why a single plugin mutex:** VST3 plugins are not thread-safe; all COM calls funnel
   through one lock. The cost of this choice is the contention described in
   `../active-issues/jitter-on-param-sync.md`.

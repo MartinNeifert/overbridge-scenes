@@ -1,7 +1,4 @@
-pub mod audio;
-pub mod audio_device;
-#[cfg(target_os = "macos")]
-pub mod coreaudio_duplex;
+pub mod control;
 #[cfg(target_os = "macos")]
 pub mod editor_macos;
 pub mod fake_plugin;
@@ -13,8 +10,6 @@ pub mod plugin_backend;
 pub mod plugin_host;
 pub mod test_params;
 
-pub use audio::DuplexSettings;
-pub use audio_device::{list_output_devices, resolve_audio_device};
 pub use fake_plugin::FakePlugin;
 pub use plugin_backend::{PluginInstance, SharedPlugin};
 pub use plugin_host::{HostCommand, ParameterIndex, ParameterSnapshot, PluginHost};
