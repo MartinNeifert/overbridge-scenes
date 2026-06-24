@@ -200,10 +200,10 @@ More run modes and architecture: [`docs/architecture.md`](docs/architecture.md).
 No hardware or VST bundle required — run the full suite as part of normal development:
 
 ```bash
-cargo test
+./scripts/test.sh
 ```
 
-This exercises parameter round-trips, batch morph writes, hardware-edit cache updates, preset sync, and related host logic via the in-process fake plugin. Optional live HTTP smoke: `./scripts/test-params.sh --live`.
+This runs Rust tests (parameter round-trips, MIDI mapping, scenes HTTP API, fake-plugin Overbridge contract) and Node unit tests for crossfader morph math in `web/scenes-morph.mjs`. Equivalent: `cargo test -- --test-threads=1` plus `npm test`. Optional live HTTP smoke: `./scripts/test-params.sh --live`.
 
 ---
 

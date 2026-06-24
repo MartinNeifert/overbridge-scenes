@@ -19,8 +19,8 @@ jobs:
         with:
           toolchain: 1.90.0
 
-      - name: cargo test
-        run: cargo test
+      - name: Full test suite
+        run: ./scripts/test.sh
 
       - name: cargo check
         run: cargo check --release

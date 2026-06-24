@@ -78,5 +78,5 @@ fn dispatch_message(cmd_tx: &Sender<HostCommand>, mapper: &mapper::MidiMapper, m
     }
 }
 
-pub use mapper::MapperConfig;
+pub use mapper::{MapperConfig, MidiMapper, MidiMapping, MidiSource, MappingTarget};
 pub use monitor::{MidiInputPort, MidiMessageEvent, MidiMonitor};

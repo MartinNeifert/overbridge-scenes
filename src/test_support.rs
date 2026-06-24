@@ -24,6 +24,10 @@ use tokio::sync::broadcast;
 
 /// Build an [`AppState`] backed by the in-process fake plugin (control-only).
 pub fn fake_app_state() -> Result<Arc<AppState>> {
+    fake_app_state_with_scenes_dir(PathBuf::from("data/scenes"))
+}
+
+pub fn fake_app_state_with_scenes_dir(scenes_root: PathBuf) -> Result<Arc<AppState>> {
     let (editor_open_tx, editor_open_rx) = unbounded();
     let (param_change_tx, param_change_rx) = unbounded();
     let (param_refresh_tx, param_refresh_rx) = unbounded();
@@ -51,7 +55,7 @@ pub fn fake_app_state() -> Result<Arc<AppState>> {
     };
 
     let (midi_tx, _) = broadcast::channel(16);
-    let scenes_store = ScenesStore::new(PathBuf::from("data/scenes"));
+    let scenes_store = ScenesStore::new(scenes_root);
 
     Ok(Arc::new(AppState::new(
         host,

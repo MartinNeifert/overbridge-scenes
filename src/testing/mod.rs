@@ -5,4 +5,7 @@
 mod api;
 mod fake_plugin;
 mod host;
+mod midi;
 mod param_sync;
+mod plugin_contract;
+mod scenes_api;

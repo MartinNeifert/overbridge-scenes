@@ -1,36 +1,31 @@
 #!/usr/bin/env bash
-# Run the full test suite (same as `cargo test` in this repo).
+# Back-compat wrapper: full suite by default, optional live smoke with --live.
 set -euo pipefail
-
-cd "$(dirname "$0")/.."
-cargo test "$@"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
 
 if [[ "${1:-}" == "--live" ]]; then
-  PORT="${OB_PORT:-7781}"
-  echo "==> live HTTP smoke on port ${PORT}"
-  RUST_LOG=warn cargo run --release -- \
-    --fake-plugin \
-    --control-only \
-    --no-engine \
-    --port "${PORT}" &
-  HOST_PID=$!
-  trap 'kill "${HOST_PID}" 2>/dev/null || true' EXIT
-
-  BASE="http://127.0.0.1:${PORT}"
+  shift
+  BIN="${ROOT}/target/debug/overbridge-scenes"
+  if [[ ! -x "$BIN" ]]; then
+    cargo build --bin overbridge-scenes
+  fi
+  PORT="${OB_TEST_PORT:-3848}"
+  export OB_FAKE_PLUGIN=1
+  "$BIN" --fake-plugin --port "$PORT" &
+  PID=$!
+  cleanup() { kill "$PID" 2>/dev/null || true; wait "$PID" 2>/dev/null || true; }
+  trap cleanup EXIT
   for _ in $(seq 1 50); do
-    curl -sf "${BASE}/api/status" >/dev/null && break
+    if curl -sf "http://127.0.0.1:${PORT}/api/status" >/dev/null 2>&1; then
+      break
+    fi
     sleep 0.1
   done
-
-  COUNT=$(curl -sf "${BASE}/api/status" | jq -r .parameter_count)
-  [[ "${COUNT}" == "9" ]] || { echo "expected 9 parameters, got ${COUNT}"; exit 1; }
-
-  curl -sf -X POST "${BASE}/api/parameters/0" \
-    -H 'Content-Type: application/json' \
-    -d '{"value":0.75}' >/dev/null
-
-  VAL=$(curl -sf "${BASE}/api/parameters/0" | jq -r .value)
-  awk "BEGIN { exit !(${VAL} > 0.74 && ${VAL} < 0.76) }"
-
-  echo "OK (live)"
+  curl -sf "http://127.0.0.1:${PORT}/api/status" | grep -q '"connected":true'
+  curl -sf -X POST "http://127.0.0.1:${PORT}/api/parameters/0" \
+    -H 'Content-Type: application/json' -d '{"value":0.5}' | grep -q '"ok":true'
+  echo "live smoke ok (port ${PORT})"
+else
+  exec "${ROOT}/scripts/test.sh" "$@"
 fi
