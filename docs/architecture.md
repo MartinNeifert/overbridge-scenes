@@ -56,15 +56,15 @@ running:
 # Build once (or after code changes)
 cargo build --release
 
-# Recommended: native duplex + device monitoring (keeps analog Main Out audible)
-RUST_LOG=info ./target/release/ob-host --plugin "Digitakt" --duplex Digitakt
+# Default: control-only (no device audio path — safe alongside a DAW)
+RUST_LOG=info ./target/release/ob-host --plugin "Digitakt"
 ```
 
-`config/default.json` enables duplex by default (`duplex.enabled: true`, device
-`"Digitakt"`), so this is equivalent with the default config:
+`config/default.json` sets `control_only: true` and `duplex.enabled: false`.
+To opt into the experimental duplex + monitoring path:
 
 ```bash
-RUST_LOG=info ./target/release/ob-host --plugin "Digitakt"
+RUST_LOG=info ./target/release/ob-host --plugin "Digitakt" --duplex Digitakt
 ```
 
 URLs (same server):
@@ -88,10 +88,13 @@ pkill -f 'target/release/ob-host'
 
 | Mode | Command / config | Device audio |
 |------|------------------|--------------|
-| **Duplex + monitor** (default) | `--duplex` or `duplex.enabled: true` | Analog out stays audible (USB-return monitoring) |
-| Control-only | `--control-only` or `control_only: true` | Untouched; no device audio path opened |
+| **Control-only** (default) | `control_only: true`, `duplex.enabled: false` in config (no extra flags) | Untouched — no device audio path; hardware keeps its own mix; DAW can use Overbridge audio in parallel |
+| **Duplex + monitor** (opt-in) | `--duplex` or `duplex.enabled: true` | Analog Main Out plays USB return; host monitors device input back so the internal mix stays audible |
 | Legacy monitor | `--audio` | Plugin output routed to device (usually silent; not recommended) |
 | Passthru | `--passthru` | Loops device input back to output via cpal |
+
+**Precedence:** `--duplex` or `duplex.enabled: true` overrides control-only.
+The default config uses control-only only.
 
 Duplex config keys: `duplex.device`, `duplex.monitor`, `duplex.monitor_source`,
 `duplex.monitor_gain`. Full background:
@@ -103,8 +106,8 @@ and [`designs/audio-routing-and-control-options.md`](designs/audio-routing-and-c
 | Flag | Description |
 |------|-------------|
 | `--plugin NAME` | Plugin name substring (Digitakt, Syntakt, …) |
-| `--duplex [DEVICE]` | Native CoreAudio duplex on the Elektron device + monitor its audio back to analog out (recommended) |
-| `--control-only` | Parameter/MIDI control only; do not open the device audio path |
+| `--duplex [DEVICE]` | Opt-in: native CoreAudio duplex on the Elektron device + monitor audio back to analog out |
+| `--control-only` | Control without opening device audio (default via config; overridden by `--duplex`) |
 | `--audio` | Legacy cpal monitor mode (plugin output to device) |
 | `--passthru` | Loop device input back to output via cpal |
 | `--list-plugins` | Scan and list available plugins |

@@ -55,27 +55,26 @@ pub struct Cli {
     #[arg(long, env = "OB_GUI")]
     pub gui: bool,
 
-    /// Control-only: drive parameter / MIDI control without opening the
+    /// Control-only (default): drive parameter / MIDI control without opening the
     /// Overbridge audio device, so the hardware's own audio output is left
-    /// untouched (overrides config `control_only`)
+    /// untouched. Use `--duplex` when you want the host to open the device.
     #[arg(long, env = "OB_CONTROL_ONLY")]
     pub control_only: bool,
 
-    /// Open the Overbridge audio device for monitoring (overrides
-    /// `control_only`; restores the old duplex-audio behavior)
+    /// Open the Overbridge audio device for monitoring (legacy cpal path;
+    /// overrides control-only)
     #[arg(long)]
     pub audio: bool,
 
     /// Passthrough: open the Overbridge device and loop its captured input
     /// straight back to its output, so the hardware keeps playing its own audio
-    /// while the host stays connected (overrides `control_only`)
+    /// while the host stays connected (overrides control-only)
     #[arg(long)]
     pub passthru: bool,
 
-    /// Native duplex audio: host the Elektron device as a single duplex AUHAL
-    /// (one device, one clock — the DAW-equivalent path the Overbridge Engine
-    /// can measure without faulting) and monitor its audio back to its output.
-    /// Optionally takes the device name substring; defaults to config / plugin.
+    /// Optional native duplex audio: host the Elektron device as a single duplex
+    /// AUHAL and monitor its audio back to analog out. Experimental — the default
+    /// control-only path leaves device audio to the hardware (or your DAW).
     #[arg(long, value_name = "DEVICE")]
     pub duplex: Option<Option<String>>,
 

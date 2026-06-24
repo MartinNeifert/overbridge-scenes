@@ -30,37 +30,38 @@ DAW track or loop your mix through the host for the box to make sound.
 Requirements remain: Overbridge Engine running, device in Overbridge USB mode, and (for
 ob-host) the plugin loaded.
 
-### 2. process() must run; opening the device is optional
+### 2. Opening the device is optional
 
-The plugin still needs a **live processing graph**:
+The plugin must be **loaded** and its editor / device IPC must be **running**
+(the hidden editor + main run-loop pump). How parameter writes reach the hardware
+depends on the audio mode:
 
-- It must be **activated** and have `process()` called before the editor / device IPC works.
-- Host → hardware parameter changes are delivered via **`IParameterChanges` inside
-  `process()`** — no `process()` call, no parameter delivery.
+| Mode | How control runs | Effect on the device's audio |
+|------|------------------|------------------------------|
+| **Control-only** (default: `control_only: true`, `duplex.enabled: false` in `config/default.json`) | No audio device opened, no `process()`. Parameters delivered via the **edit controller** (same path as the plugin GUI), driven by the run-loop pump. | **Untouched** — the host never writes to the USB return; analog Main Out keeps the hardware's own mix. A DAW can use Overbridge USB audio in parallel. |
+| **Duplex + monitor** (opt-in: `--duplex` or `duplex.enabled: true`) | A single CoreAudio duplex AUHAL on the Elektron device drives `process()` from one render callback; device input is monitored back to the USB return | Analog Main Out plays the **USB return**. Monitoring copies the device's own input (Main L/R by default) back so you still hear the internal mix |
+| **Legacy monitor** (`--audio`) | A cpal stream on the Overbridge CoreAudio device drives `process()` | The plugin output is streamed to the device's USB return, which **overrides** the hardware's own audio (often silence) |
 
-But *driving* `process()` does **not** require opening the Overbridge audio device. Two
-modes exist:
+This is why streaming audio to the device made the Digitakt go silent in early
+host builds: the host wrote the plugin's (silent) output bus to the USB-return
+channels, and the device played that instead of its internal mix.
 
-| Mode | How `process()` runs | Effect on the device's audio |
-|------|----------------------|------------------------------|
-| **Control-only** (`control_only: true`, the default; or `--control-only`) | A tick loop calls `process()` on silence at block cadence; no cpal stream is opened | **Untouched** — nothing is written to the device |
-| **Monitor** (`--audio`, or `control_only: false`) | A duplex cpal stream on the Overbridge CoreAudio device drives `process()` | The plugin output is streamed to the device's **USB return**, which **overrides the hardware's own audio** |
+**Control-only is the default** — the host avoids opening the Elektron device
+entirely, so the hardware keeps making sound on its own path while scenes,
+crossfader, and API control still work. This is the right setup when a DAW
+already owns Overbridge audio. It also sidesteps the audio-loop lock contention
+behind [param-sync jitter](../active-issues/jitter-on-param-sync.md).
 
-This is why streaming audio to the device made the Digitakt go silent: in monitor mode the
-host writes the plugin's output (often silence) to the device's USB-return channels, and the
-device plays that instead of its internal mix. **Control-only avoids the device entirely**,
-so the hardware keeps making sound while parameters/MIDI are still controlled. It also
-sidesteps the audio-loop lock contention behind the
-[param-sync jitter](../active-issues/jitter-on-param-sync.md).
+Use duplex only when you explicitly want ob-host to open the device audio path
+*and* monitor through the USB return.
 
-Use `--audio` only if you actually want to monitor the device's audio through the Mac.
+> **Mode precedence:** `--duplex` or `duplex.enabled: true` overrides
+> control-only. Startup logs confirm the mode:
+>
+> - Control-only (default): `Control-only mode: audio engine not engaged` (no `CoreAudio duplex` line)
+> - Duplex: `Duplex mode: single AUHAL on "Digitakt" … monitor on`
 
-> Update: on macOS the supported way to monitor the device while keeping it audible
-> and the Overbridge Engine happy is the native single-AUHAL **duplex** mode
-> (`--duplex`), which the old cpal `--audio` path could not do reliably. See
-> [`audio-cutout-and-duplex-fix.md`](audio-cutout-and-duplex-fix.md) for the root
-> cause (Engine latency-probe fault + the device's analog out playing the USB
-> return) and the fix.
+Use `--audio` only for the legacy cpal monitor path (not recommended).
 
 ## Programmatic control options (and why most are dead ends)
 

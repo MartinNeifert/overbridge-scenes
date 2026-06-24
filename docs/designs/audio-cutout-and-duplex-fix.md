@@ -131,15 +131,30 @@ The transport context handed to `process()` is also made DAW-like (an advancing,
 "playing" timeline with `continousTimeSamples` set), because the Overbridge
 plugin only streams when it sees a valid, advancing transport.
 
-## The shipped configuration
+## Shipped modes
 
-Native duplex + monitoring is now a first-class mode, not a diagnostic toggle.
+### Default: control-only
+
+`config/default.json` ships with `control_only: true` and `duplex.enabled:
+false`. The host never opens the Elektron audio device — parameters go through
+the edit controller, and analog Main Out stays on the hardware's own mix. This
+is the recommended path when a DAW (e.g. Ableton) already uses Overbridge audio.
+
+```bash
+ob-host --plugin Digitakt
+```
+
+### Opt-in: native duplex + monitoring
+
+Native duplex + monitoring remains available for setups that want ob-host itself
+to own the device audio path:
 
 - **CLI:** `ob-host --plugin "Digitakt" --duplex [DEVICE]`
   (DEVICE defaults to config, then the plugin name).
-- **Config (`config/default.json`):**
+- **Config:** set `duplex.enabled: true` in `config/default.json`:
 
 ```json
+"control_only": false,
 "duplex": {
   "enabled": true,
   "device": "Digitakt",
@@ -156,6 +171,11 @@ Native duplex + monitoring is now a first-class mode, not a diagnostic toggle.
 The previous diagnostic environment variables (`OB_CA_LOOPBACK`,
 `OB_CA_SILENCE_OUT`) were removed; `OB_CA_DUPLEX=<device>` is still honored as a
 convenience override that enables the mode with monitoring on.
+
+Control-only does not drive `process()` or satisfy the Engine's duplex latency
+probe, but scenes, crossfader, and API control still work via the edit
+controller. See
+[`audio-routing-and-control-options.md`](audio-routing-and-control-options.md).
 
 ### Real-time safety
 

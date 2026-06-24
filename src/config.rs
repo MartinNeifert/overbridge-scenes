@@ -2,6 +2,10 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+fn default_control_only() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub api_port: u16,
@@ -15,11 +19,10 @@ pub struct AppConfig {
     /// connected hardware.
     #[serde(default)]
     pub audio_device: Option<String>,
-    /// Control-only: drive the plugin's `process()` loop (so parameter / MIDI
-    /// changes still reach the device) without opening the Overbridge audio
-    /// device. Streaming to that device interrupts the hardware's own audio
-    /// output, so this is the right default for a control surface.
-    #[serde(default)]
+    /// Control-only (default): parameter / MIDI control without opening the
+    /// Overbridge audio device. The hardware keeps its own mix on analog Main
+    /// Out — ideal alongside a DAW using Overbridge audio separately.
+    #[serde(default = "default_control_only")]
     pub control_only: bool,
     /// Native single-AUHAL duplex audio path on the Elektron device. This is the
     /// DAW-equivalent path (one device, one clock) the Overbridge Engine can

@@ -5,9 +5,9 @@
   "sample_rate": 48000,
   "block_size": 128,
   "overbridge_engine": "/Applications/Elektron/Overbridge Engine.app",
-  "control_only": false,
+  "control_only": true,
   "duplex": {
-    "enabled": true,
+    "enabled": false,
     "device": "Digitakt",
     "monitor": true,
     "monitor_source": 0,

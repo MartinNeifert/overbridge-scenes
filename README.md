@@ -75,7 +75,8 @@ parameter name yet.
   logs. Follows the active pattern from the desktop UI; override with
   `?pattern=B05`.
 - **Live, bidirectional** — hardware moves show up in the UI; UI writes hit the
-  device. Duplex monitoring keeps the analog Main Out audible while connected.
+  device. Default control-only mode leaves device audio to the hardware (or your
+  DAW) while the host handles parameters.
 
 ### For builders
 
@@ -102,56 +103,75 @@ machine — all gitignored.
 
 ## Audio routing (experimental)
 
-> **Not performance-ready.** This is a control-plane prototype. Expect occasional
-> clicks, dropouts, or rough edges on the audio path — especially while parameters
-> are changing quickly, the crossfader is moving, or the plugin is syncing state.
-> Do not rely on it for live shows, recording, or critical listening yet.
+> **Not performance-ready on the optional duplex path.** The web UI and API are
+> the main product. Audio hosting exists for advanced setups; the default
+> **control-only** path does not open the device audio stream at all.
 
-The web UI and API are the main product. Audio exists so the Overbridge plugin can
-stay connected and push parameter/MIDI changes to the hardware — the same reason
-a DAW keeps the plugin loaded, not because this is a finished audio driver.
+The web UI and API are the main product. By default the host drives parameters
+through the edit controller only — the same reason a DAW keeps the plugin
+loaded, but without touching the device's USB audio return.
 
-### Signal path (high level)
+### Signal path (default: control-only)
 
 ```text
   Web UI / HTTP / WebSocket / MIDI
               │
               ▼
-         ob-host (VST3 host)
+         ob-host (VST3 host, control-only)
               │
               ▼
     Elektron Overbridge VST3 plugin  ──►  Overbridge Engine  ──USB──►  device
-              │
-              ▼
-    CoreAudio duplex on the Elektron device (default mode)
+                                              (params / MIDI only)
+
+  Device audio: analog Main Out ←── hardware's own mix (untouched by ob-host)
+  DAW audio:   Ableton / etc. can use Overbridge USB channels in parallel
 ```
 
-### Default: duplex + monitoring
+### Default: control-only
 
-Out of the box, `ob-host` opens the Elektron as a **single CoreAudio duplex**
-device (one clock, one driver — similar to selecting it as input *and* output in
-a DAW):
+Out of the box (`control_only: true`, `duplex.enabled: false` in
+`config/default.json`), `ob-host` **does not** open the Elektron as an audio
+device:
 
 | Path | What it does |
 |------|----------------|
-| **Control** | The VST3 plugin + Engine carry parameter and MIDI changes to the box. |
-| **What you hear** | While connected, the device's **Main Out plays the USB return**. We copy the device's own input (Main L/R by default) back to that output so you still hear the internal mix — DAW-style monitoring, not the VST's audio bus. |
-| **Why `process()` runs** | Keeps the plugin alive and the Overbridge link happy; it is not a polished low-latency performance pipeline. |
-
-Tunable in `config/default.json`: `duplex.device`, `duplex.monitor`,
-`duplex.monitor_source`, `duplex.monitor_gain`.
-
-### If you only want control (no host audio path)
+| **Control** | The VST3 plugin + Engine carry parameter and MIDI changes to the box via the edit controller. |
+| **Device audio** | Untouched — analog Main Out stays on the hardware's own mix. |
+| **Alongside a DAW** | Run Overbridge audio in Ableton (or similar) while ob-host handles scenes/crossfader — no fight over the USB return. |
 
 ```bash
-RUST_LOG=info ./target/release/ob-host --plugin Digitakt --control-only
+RUST_LOG=info ./target/release/ob-host --plugin Digitakt
 ```
 
-The host never opens the device audio stream. The hardware runs its own audio
-untouched; you still get scenes, crossfader, and API control. Useful when glitches
-on the monitor path are getting in the way.
+Startup logs:
 
-### Known rough edges
+```
+Control-only mode: audio engine not engaged — control via edit controller only (no process())
+```
+
+### Optional: duplex + monitoring
+
+When you want ob-host itself to open the device audio path (experimental), pass
+`--duplex` or set `duplex.enabled: true` in config. The host opens a **single
+CoreAudio duplex** AUHAL and monitors device input back to the USB return so
+analog Main Out stays audible while connected:
+
+```bash
+RUST_LOG=info ./target/release/ob-host --plugin Digitakt --duplex
+```
+
+Tunable in config: `duplex.device`, `duplex.monitor`, `duplex.monitor_source`,
+`duplex.monitor_gain`. See
+[`docs/designs/audio-cutout-and-duplex-fix.md`](docs/designs/audio-cutout-and-duplex-fix.md).
+
+**Mode precedence:** `--duplex` or `duplex.enabled: true` overrides control-only.
+To return to control-only after enabling duplex in config, set
+`duplex.enabled: false` (and keep `control_only: true`).
+
+### Known rough edges (duplex path only)
+
+These apply when `duplex.enabled: true` or `--duplex` — not in the default
+control-only mode:
 
 - Real-time safety is best-effort: the audio callback uses `try_lock()` on the
   plugin; heavy param sync or editor work can still cause **lock-skips** and brief
