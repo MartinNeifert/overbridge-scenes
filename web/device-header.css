@@ -65,18 +65,18 @@
 }
 
 .obdh-status.connected {
-  background: #1a3d2e;
+  background: var(--status-ok-bg);
   color: var(--success);
 }
 
 .obdh-status.warn {
-  background: #3d331a;
+  background: var(--status-warn-bg);
   color: var(--warn);
 }
 
 .obdh-status.error {
-  background: #3d1a1a;
-  color: #ff6b6b;
+  background: var(--status-err-bg);
+  color: var(--status-err-text);
 }
 
 .obdh-status.idle {

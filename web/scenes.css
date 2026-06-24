@@ -1,16 +1,5 @@
 :root {
-  --bg: #121418;
-  --surface: #1a1d22;
-  --border: #2e333b;
-  --text: #e4e6ea;
-  --muted: #8a919c;
-  --accent: #6b9fff;
-  --scene-a: #6b9fff;
-  --scene-b: #e08b6a;
-  --success: #5cb88a;
-  --danger: #d97070;
   --radius: 6px;
-  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
   --page-pad: 1rem;
   --section-gap: 0.75rem;
 }
@@ -530,7 +519,7 @@ body {
 .sc-add-btn.in-scene {
   background: var(--success);
   border-color: var(--success);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 /* MIDI config */
@@ -632,13 +621,13 @@ body {
 }
 
 .sc-btn-danger:hover:not(:disabled) {
-  background: rgba(217, 112, 112, 0.12);
+  background: var(--danger-subtle);
 }
 
 .sc-btn.sc-btn-active {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .sc-btn-sm { padding: 0.2rem 0.45rem; font-size: 0.72rem; }

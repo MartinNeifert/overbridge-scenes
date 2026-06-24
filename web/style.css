@@ -1,15 +1,5 @@
 :root {
-  --bg: #0f1117;
-  --surface: #1a1d27;
-  --border: #2a2f3d;
-  --text: #e8eaef;
-  --muted: #8b93a7;
-  --accent: #5b8cff;
-  --accent-dim: #3d5a99;
-  --success: #3dd68c;
-  --warn: #f5a623;
   --radius: 10px;
-  --font: "SF Pro Text", "Segoe UI", system-ui, sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -30,6 +20,13 @@ header {
   padding: 1rem 1.5rem;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
 .device-detail {

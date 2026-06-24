@@ -4,13 +4,18 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Overbridge Scenes — Control Surface</title>
+  <script src="theme.js"></script>
+  <link rel="stylesheet" href="theme.css" />
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="device-header.css" />
 </head>
 <body>
   <header>
     <h1>Overbridge Scenes</h1>
-    <div id="ob-device-header"></div>
+    <div class="header-actions">
+      <button type="button" class="ob-theme-toggle" aria-label="Switch to light theme">Light</button>
+      <div id="ob-device-header"></div>
+    </div>
   </header>
 
   <section class="devices-panel" id="devices-panel">

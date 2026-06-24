@@ -1,14 +1,4 @@
-:root {
-  color-scheme: dark;
-  --bg: #0e0e10;
-  --surface: #1a1a1f;
-  --border: #2c2c34;
-  --text: #ececef;
-  --muted: #8b8b96;
-  --accent: #5b9fd4;
-  --accent-a: #c97a4a;
-  --accent-b: #6a9fd4;
-}
+/* Remote crossfader — uses shared theme.css tokens */
 
 * {
   box-sizing: border-box;
@@ -42,10 +32,19 @@ body {
   text-align: center;
 }
 
+.remote-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+}
+
 .remote-title {
   margin: 0;
   font-size: 1.1rem;
   font-weight: 600;
+  text-align: left;
 }
 
 .remote-meta {
@@ -144,7 +143,7 @@ body {
 }
 
 .remote-btn:active {
-  background: #25252c;
+  background: var(--btn-hover);
 }
 
 .remote-status {
@@ -156,5 +155,5 @@ body {
 }
 
 .remote-status.error {
-  color: #e07070;
+  color: var(--danger);
 }

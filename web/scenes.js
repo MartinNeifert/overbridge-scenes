@@ -27,6 +27,7 @@ const PATTERN_SEL_PREFIX = "ob-scenes:pattern:"; // remembers the chosen pattern
 // ---------------------------------------------------------------------------
 
 let plugin = null; // active plugin name, used to namespace stored scenes
+let loadGeneration = 0; // ignore stale load() completions after plugin/pattern changes
 let pattern = { bank: 0, num: 0 }; // active pattern (0-based bank + number)
 let liveParams = []; // [{index,id,name,value,display,min,max,unit,...}]
 const liveByIndex = new Map(); // index -> snapshot
@@ -37,6 +38,7 @@ let baseline = new Map(); // index -> pattern baseline value, used when a crossf
 let storedBaseline = null; // raw [{index,id,value}] from storage, awaiting resolution against live params
 let baselineResolved = false; // true once this pattern's baseline is loaded or auto-seeded
 let baselineExplicit = false; // true after Capture baseline — until then, live wins over auto-seed for empty sides
+let autoBaselineOnPattern = false; // set on pattern switch → one explicit capture from live
 let activeSceneId = "1"; // scene the picker adds to
 let paramLearnSceneId = null; // scene id while waiting for a hardware wiggle
 let paramLearnBaseline = null; // Map<index, value> snapshot at learn start
@@ -68,6 +70,7 @@ const el = {
   captureBase: document.getElementById("sc-capture-base"),
   clockSlide: document.getElementById("sc-clock-slide"),
   clockBars: document.getElementById("sc-clock-bars"),
+  clockSlideOnce: document.getElementById("sc-clock-slide-once"),
   clockSlideStatus: document.getElementById("sc-clock-slide-status"),
   midiInput: document.getElementById("sc-midi-input"),
   activeScene: document.getElementById("sc-active-scene"),
@@ -321,6 +324,7 @@ function flushScenesOnExit() {
 }
 
 async function load() {
+  const gen = ++loadGeneration;
   scenes = freshScenes();
   crossfader = { a: null, b: null, pos: 0 };
   baseline = new Map();
@@ -336,21 +340,24 @@ async function load() {
       const raw = readLocalScenesRaw();
       if (raw) {
         data = JSON.parse(raw);
-        await writeScenes();
+        if (gen === loadGeneration) await writeScenes();
       }
     } else {
       throw new Error(`HTTP ${res.status}`);
     }
+    if (gen !== loadGeneration) return;
     if (data) applyScenesPayload(data);
   } catch (e) {
     console.warn("scene load from disk failed, trying browser storage", e);
     try {
       const raw = readLocalScenesRaw();
+      if (gen !== loadGeneration) return;
       if (raw) applyScenesPayload(JSON.parse(raw));
     } catch (err) {
       console.warn("scene load failed", err);
     }
   }
+  if (gen !== loadGeneration) return;
   if (liveParams.length) validateScenes();
 }
 
@@ -395,6 +402,41 @@ function persistPatternSel() {
     localStorage.setItem(patternSelKey(), JSON.stringify({ bank: pattern.bank, num: pattern.num }));
   } catch (e) {
     console.warn("pattern selection save failed", e);
+  }
+}
+
+// Fetch the loaded plugin before the first scene load so disk paths match the device.
+async function bootstrapPluginFromHost() {
+  try {
+    const res = await fetch("/api/selector");
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.loaded_plugin) plugin = data.loaded_plugin;
+  } catch (e) {
+    console.warn("plugin bootstrap failed", e);
+  }
+}
+
+function parsePatternKeyFromString(key) {
+  const m = /^([A-P])(\d{1,2})$/i.exec(String(key || "").trim());
+  if (!m) return null;
+  const bank = m[1].toUpperCase().charCodeAt(0) - 65;
+  const num = parseInt(m[2], 10) - 1;
+  if (bank < 0 || bank >= PATTERN_BANKS || num < 0 || num >= PATTERNS_PER_BANK) return null;
+  return { bank, num };
+}
+
+// Prefer the pattern last persisted by this or another client over localStorage.
+async function restoreActivePatternFromServer() {
+  if (!plugin) return;
+  try {
+    const res = await fetch(activePatternApiUrl());
+    if (!res.ok) return;
+    const data = await res.json();
+    const parsed = parsePatternKeyFromString(data.pattern);
+    if (parsed) pattern = parsed;
+  } catch (e) {
+    console.warn("active pattern restore failed", e);
   }
 }
 
@@ -447,6 +489,8 @@ async function setPattern(bank, num, opts = {}) {
   persistPatternSel();
   void persistActivePattern();
   await load();
+  autoBaselineOnPattern = true;
+  tryAutoBaselineCapture();
   renderAll();
   if (opts.toast !== false) toast(`Pattern ${patternKey()}`);
 }
@@ -524,8 +568,7 @@ function serializeBaseline() {
 
 // Snapshot the current live values of every mapped param as this pattern's
 // baseline, then persist. `silent` suppresses the toast (auto-seed on load).
-// `explicit: true` only from the Capture button — marks the baseline as the
-// intentional "home" for empty crossfader sides (overrides live readings).
+// `explicit: true` from Capture baseline or an automatic capture on pattern switch.
 function captureBaseline(opts = {}) {
   baseline = new Map();
   for (const index of baselineParamIndices()) {
@@ -536,6 +579,13 @@ function captureBaseline(opts = {}) {
   baselineExplicit = !!opts.explicit;
   writeScenes();
   if (!opts.silent) toast(`Baseline captured for ${patternKey()}`);
+}
+
+// After a pattern switch, snapshot live values once (same as Capture baseline).
+function tryAutoBaselineCapture() {
+  if (!autoBaselineOnPattern || !liveParams.length) return;
+  autoBaselineOnPattern = false;
+  captureBaseline({ silent: true, explicit: true });
 }
 
 // Seed a baseline value for any newly-mapped param from the current live
@@ -572,7 +622,9 @@ function resolveBaseline() {
     baselineResolved = true;
   }
   if (!baselineResolved) {
-    captureBaseline({ silent: true, explicit: false }); // first open → seed, live still wins
+    if (!autoBaselineOnPattern) {
+      captureBaseline({ silent: true, explicit: false }); // first open → seed, live still wins
+    }
   } else {
     ensureBaselineCoverage();
   }
@@ -1173,6 +1225,11 @@ let clockState = {
   syncMode: "need_start", // need_start | next_cycle
 };
 let clockSlideDriving = false;
+let clockSlideOneShot = {
+  armed: false,
+  running: false,
+  originClocks: null,
+};
 
 // Keep phase while clock slide is off so re-enable can latch the next bar 1.
 const TRANSPORT_ACTIVE_MS = 400;
@@ -1297,10 +1354,29 @@ function onClockSlideClockTick() {
     clockState.awaitingSync = false;
     clockState.syncMode = null;
     clockState.tick = 0;
+    if (clockSlideOneShot.armed) {
+      beginClockSlideOneShotRun();
+      renderClockSlideStatus();
+      return;
+    }
     setCrossfaderPos(0);
     return;
   }
   if (!clockState.running || clockState.pausedByUser) return;
+
+  if (clockSlideOneShot.running) {
+    const elapsed = midiTransport.clocks - (clockSlideOneShot.originClocks || 0);
+    if (elapsed >= cycle) {
+      finishClockSlideOneShot();
+      return;
+    }
+    clockState.tick = elapsed;
+    const pos = elapsed / cycle;
+    setCrossfaderPos(pos);
+    renderClockSlideStatus();
+    return;
+  }
+
   clockState.tick = midiTransport.clocks % cycle;
   applyClockSlidePos();
 }
@@ -1325,7 +1401,88 @@ function clockSlideCycleTicks() {
   return clockSlideCfg.bars * CLOCK_BEATS_PER_BAR * MIDI_CLOCK_PPQ;
 }
 
+function isClockSlideEngaged() {
+  return (
+    clockSlideCfg.enabled ||
+    clockSlideOneShot.armed ||
+    clockSlideOneShot.running
+  );
+}
+
+function cancelClockSlideOneShot() {
+  clockSlideOneShot.armed = false;
+  clockSlideOneShot.running = false;
+  clockSlideOneShot.originClocks = null;
+}
+
+function beginClockSlideOneShotRun() {
+  clockSlideOneShot.armed = false;
+  clockSlideOneShot.running = true;
+  clockSlideOneShot.originClocks = midiTransport.clocks;
+  clockState.tick = 0;
+  setCrossfaderPos(0);
+}
+
+function finishClockSlideOneShot() {
+  const cycle = clockSlideCycleTicks();
+  cancelClockSlideOneShot();
+  setCrossfaderPos(1);
+  if (clockSlideCfg.enabled) {
+    clockState.running = true;
+    clockState.pausedByUser = false;
+    clockState.awaitingSync = false;
+    clockState.syncMode = null;
+    clockState.tick = midiTransport.clocks % cycle;
+    applyClockSlidePos();
+  } else {
+    clockState.running = false;
+    clockState.awaitingSync = true;
+    clockState.syncMode = "need_start";
+  }
+  renderClockSlideStatus();
+}
+
+function armClockSlideOneShot() {
+  if (!pcCfg.inputId) {
+    toast("Select MIDI port in header");
+    return;
+  }
+  if (clockSlideOneShot.armed || clockSlideOneShot.running) return;
+
+  clockSlideOneShot.armed = true;
+  clockState.pausedByUser = false;
+  clockState.running = true;
+
+  const cycle = clockSlideCycleTicks();
+  if (isTransportActive()) {
+    clockState.awaitingSync = true;
+    clockState.syncMode = "next_cycle";
+    if (midiTransport.clocks % cycle === 0) {
+      clockState.awaitingSync = false;
+      clockState.syncMode = null;
+      beginClockSlideOneShotRun();
+      toast(`One slide · ${clockSlideCfg.bars} bars`);
+    } else {
+      toast(`One slide · syncing at next bar 1`);
+    }
+  } else {
+    clockState.awaitingSync = true;
+    clockState.syncMode = "need_start";
+    clockState.tick = 0;
+    toast(`One slide · press Play to sync`);
+  }
+  renderClockSlideStatus();
+}
+
 function pauseClockSlideManual() {
+  if (clockSlideOneShot.armed || clockSlideOneShot.running) {
+    cancelClockSlideOneShot();
+    clockState.running = false;
+    clockState.awaitingSync = true;
+    clockState.syncMode = "need_start";
+    renderClockSlideStatus();
+    return;
+  }
   if (!clockSlideCfg.enabled || clockSlideDriving) return;
   clockState.pausedByUser = true;
   renderClockSlideStatus();
@@ -1343,12 +1500,40 @@ function setCrossfaderPos(pos) {
 
 function renderClockSlideStatus() {
   if (!el.clockSlideStatus) return;
-  if (!clockSlideCfg.enabled) {
+  if (!isClockSlideEngaged()) {
     el.clockSlideStatus.textContent = "";
     return;
   }
   if (!pcCfg.inputId) {
     el.clockSlideStatus.textContent = "select Digitakt port in header MIDI";
+    return;
+  }
+  if (clockSlideOneShot.armed && clockState.awaitingSync) {
+    if (clockState.syncMode === "next_cycle") {
+      const cycle = clockSlideCycleTicks();
+      const rem = cycle - (midiTransport.clocks % cycle);
+      const barsLeft = Math.max(
+        1,
+        Math.ceil(rem / (CLOCK_BEATS_PER_BAR * MIDI_CLOCK_PPQ))
+      );
+      el.clockSlideStatus.textContent = `one slide · syncing at bar 1 · ${barsLeft} bar${barsLeft === 1 ? "" : "s"}`;
+      return;
+    }
+    el.clockSlideStatus.textContent = "one slide · waiting for Start";
+    return;
+  }
+  if (clockSlideOneShot.running) {
+    const cycle = clockSlideCycleTicks();
+    const elapsed = Math.max(0, midiTransport.clocks - (clockSlideOneShot.originClocks || 0));
+    const t = Math.min(elapsed, cycle - 1);
+    const bar = Math.floor(t / (CLOCK_BEATS_PER_BAR * MIDI_CLOCK_PPQ)) + 1;
+    const beat =
+      Math.floor((t % (CLOCK_BEATS_PER_BAR * MIDI_CLOCK_PPQ)) / MIDI_CLOCK_PPQ) + 1;
+    el.clockSlideStatus.textContent = `one slide · bar ${bar}/${clockSlideCfg.bars} · beat ${beat}`;
+    return;
+  }
+  if (!clockSlideCfg.enabled) {
+    el.clockSlideStatus.textContent = "";
     return;
   }
   if (clockState.awaitingSync) {
@@ -1382,8 +1567,9 @@ function renderClockSlideStatus() {
 }
 
 function handleClockSlide(port, bytes) {
-  if (!clockSlideCfg.enabled || !bytes.length || !pcCfg.inputId) return;
+  if (!bytes.length || !pcCfg.inputId) return;
   if (!portSelected(port, pcCfg.inputId)) return;
+  if (!isClockSlideEngaged()) return;
 
   for (let i = 0; i < bytes.length; ) {
     const status = bytes[i];
@@ -1399,7 +1585,11 @@ function handleClockSlide(port, bytes) {
       clockState.awaitingSync = false;
       clockState.syncMode = null;
       clockState.tick = 0;
-      setCrossfaderPos(0);
+      if (clockSlideOneShot.armed) {
+        beginClockSlideOneShotRun();
+      } else {
+        setCrossfaderPos(0);
+      }
       renderClockSlideStatus();
       i += 1;
       continue;
@@ -1465,6 +1655,9 @@ if (el.clockBars) {
     renderClockSlideStatus();
   });
 }
+if (el.clockSlideOnce) {
+  el.clockSlideOnce.addEventListener("click", () => armClockSlideOneShot());
+}
 
 el.captureBase.addEventListener("click", () => {
   captureBaseline({ explicit: true });
@@ -1502,6 +1695,7 @@ function ingestParameters(list) {
     tryParamLearnFromUpdates(updates);
   }
   validateScenes();
+  tryAutoBaselineCapture();
 }
 
 function applyParamUpdates(updates) {
@@ -1784,6 +1978,10 @@ function handleProgramChange(bytes) {
   const bank = Math.floor(p / PATTERNS_PER_BANK) % PATTERN_BANKS;
   const num = p % PATTERNS_PER_BANK;
   setPattern(bank, num, { toast: false });
+  if (clockSlideOneShot.armed || clockSlideOneShot.running) {
+    cancelClockSlideOneShot();
+    renderClockSlideStatus();
+  }
   if (clockSlideCfg.enabled) resetClockSlideSequence();
   setPcStatus(`PC ch${ch} · ${p} → ${patternKey()}`);
 }
@@ -2217,8 +2415,10 @@ el.midiClear.addEventListener("click", () => {
 window.addEventListener("pagehide", flushScenesOnExit);
 
 (async () => {
-  restorePatternSel();
   await fetchHostDebugMode();
+  await bootstrapPluginFromHost();
+  restorePatternSel();
+  await restoreActivePatternFromServer();
   await load();
   void persistActivePattern();
   renderAll();

@@ -6,12 +6,17 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <title>Crossfader — Overbridge Scenes</title>
+  <script src="theme.js"></script>
+  <link rel="stylesheet" href="theme.css" />
   <link rel="stylesheet" href="remote.css" />
 </head>
 <body>
   <div class="remote-app">
     <header class="remote-header">
-      <p class="remote-title">Crossfader</p>
+      <div class="remote-header-top">
+        <p class="remote-title">Crossfader</p>
+        <button type="button" class="ob-theme-toggle" aria-label="Switch to light theme">Light</button>
+      </div>
       <p class="remote-meta" id="remote-meta">Connecting…</p>
     </header>
 
