@@ -131,6 +131,13 @@ impl PluginInstance {
             Self::Vst3(_) => bail!("operation requires the fake plugin"),
         }
     }
+
+    pub fn fake(&self) -> Result<&FakePlugin> {
+        match self {
+            Self::Fake(p) => Ok(p),
+            Self::Vst3(_) => bail!("operation requires the fake plugin"),
+        }
+    }
 }
 
 pub type SharedPlugin = std::sync::Arc<parking_lot::Mutex<PluginInstance>>;

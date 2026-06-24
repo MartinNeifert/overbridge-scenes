@@ -11,7 +11,12 @@ pub mod midi;
 pub mod net_util;
 pub mod scenes_store;
 pub mod state;
+
+#[cfg(test)]
 pub mod test_support;
+
+#[cfg(test)]
+mod testing;
 
 pub use config::AppConfig;
 pub use host::PluginHost;

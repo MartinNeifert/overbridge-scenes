@@ -1,16 +1,13 @@
 #!/usr/bin/env bash
-# Headless parameter e2e against the in-process fake plugin.
+# Run the full test suite (same as `cargo test` in this repo).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-
-echo "==> cargo test (in-process fake plugin e2e)"
-# Global VST notifiers are process-wide; run serially to avoid cross-test races.
-cargo test --test e2e_params -- --test-threads=1
+cargo test "$@"
 
 if [[ "${1:-}" == "--live" ]]; then
   PORT="${OB_PORT:-7781}"
-  echo "==> live HTTP harness on port ${PORT}"
+  echo "==> live HTTP smoke on port ${PORT}"
   RUST_LOG=warn cargo run --release -- \
     --fake-plugin \
     --control-only \
@@ -21,9 +18,7 @@ if [[ "${1:-}" == "--live" ]]; then
 
   BASE="http://127.0.0.1:${PORT}"
   for _ in $(seq 1 50); do
-    if curl -sf "${BASE}/api/status" >/dev/null; then
-      break
-    fi
+    curl -sf "${BASE}/api/status" >/dev/null && break
     sleep 0.1
   done
 

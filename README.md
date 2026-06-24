@@ -195,6 +195,16 @@ RUST_LOG=info ./target/release/ob-host --plugin Digitakt --debug
 
 More run modes and architecture: [`docs/architecture.md`](docs/architecture.md).
 
+### Tests
+
+No hardware or VST bundle required — run the full suite as part of normal development:
+
+```bash
+cargo test
+```
+
+This exercises parameter round-trips, batch morph writes, hardware-edit cache updates, preset sync, and related host logic via the in-process fake plugin. Optional live HTTP smoke: `./scripts/test-params.sh --live`.
+
 ---
 
 ## How to use it

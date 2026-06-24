@@ -1,13 +1,20 @@
-//! Helpers for in-process HTTP e2e tests with the fake plugin backend.
+//! Test harness helpers for in-process API / host tests.
+
+#![cfg(test)]
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
 use crossbeam_channel::unbounded;
+use http_body_util::BodyExt;
+use tower::ServiceExt;
 use truce_rack_core::info::PluginInfo;
 use truce_rack_vst3::{set_editor_open_notifier, set_param_change_notifier, set_param_refresh_notifier};
 
+use crate::api;
 use crate::config::{AppConfig, DuplexConfig, MidiConfig};
 use crate::host::PluginHost;
 use crate::midi::MapperConfig;
@@ -81,4 +88,48 @@ pub fn pump_runloop(state: &AppState, ticks: usize) {
         state.host().runloop_tick();
         std::thread::sleep(std::time::Duration::from_millis(4));
     }
+}
+
+pub async fn get_json(
+    app: &axum::Router,
+    uri: &str,
+) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = if body.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::from_slice(&body).unwrap()
+    };
+    (status, json)
+}
+
+pub async fn post_json(app: &axum::Router, uri: &str, body: &str) -> StatusCode {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    response.status()
+}
+
+pub fn test_router(state: Arc<AppState>) -> axum::Router {
+    api::router(state, PathBuf::from("web"))
 }

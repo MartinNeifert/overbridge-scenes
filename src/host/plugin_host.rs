@@ -411,6 +411,11 @@ impl PluginHost {
         self.sync_pump.tick(ParamSyncPump::noop_pre_scan);
     }
 
+    /// Apply a hardware-style knob move to the host cache (same outcome as `performEdit`).
+    pub fn inject_hardware_edit(&self, id: u32, value: f64) {
+        self.apply_param_value_by_id(id, value);
+    }
+
     fn apply_param_value_by_id(&self, id: u32, value: f64) {
         let Some(&index) = self.param_id_to_index.get(&id) else {
             return;

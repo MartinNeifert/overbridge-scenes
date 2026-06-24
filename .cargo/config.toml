@@ -1,2 +1,6 @@
 [build]
 target-dir = "target"
+
+# Serialise integration tests: VST notifier channels are process-global.
+[alias]
+test = "test -- --test-threads=1"

@@ -139,8 +139,8 @@ impl FakePlugin {
         if bytes.len() < 4 || &bytes[..STATE_MAGIC.len()] != STATE_MAGIC {
             return 3; // kNotImplemented
         }
-        if bytes.len() >= 7 {
-            let preset = bytes[6];
+        if bytes.len() >= 8 {
+            let preset = bytes[7];
             self.load_preset(preset);
         }
         3
