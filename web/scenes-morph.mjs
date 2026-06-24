@@ -165,19 +165,33 @@ export function computeCrossfadeUpdates(crossfader, scenes, ctx, sliderMode = "j
  * Build grab state for pickup/scale (mutates per-map entries during morph).
  * Freezes each param's live value and A/B endpoints at grab time so the morph
  * trajectory stays fixed while pickup/scale reconcile against knob position.
+ *
+ * Pass `{ ignoreStaleGrab: true }` when replacing an existing grab so empty-side
+ * endpoints are frozen from live values, not the previous grab's v0.
  */
-export function beginXfGrab(crossfader, scenes, ctx) {
+export function beginXfGrab(crossfader, scenes, ctx, opts = {}) {
+  const grabCtx =
+    opts.ignoreStaleGrab && ctx.xfGrab ? { ...ctx, xfGrab: null } : ctx;
   const sceneA = sceneById(scenes, crossfader.a);
   const sceneB = sceneById(scenes, crossfader.b);
   const per = new Map();
   for (const index of unionIndices(crossfader, scenes)) {
-    const lv = ctx.liveValues.has(index) ? ctx.liveValues.get(index) : undefined;
+    const lv = grabCtx.liveValues.has(index)
+      ? grabCtx.liveValues.get(index)
+      : undefined;
     per.set(index, {
-      v0: lv !== undefined ? lv : baseValue(index, ctx),
-      av: endpointValue(sceneA, index, ctx),
-      bv: endpointValue(sceneB, index, ctx),
+      v0: lv !== undefined ? lv : baseValue(index, grabCtx),
+      av: endpointValue(sceneA, index, grabCtx),
+      bv: endpointValue(sceneB, index, grabCtx),
       engaged: false,
     });
   }
   return { t0: crossfader.pos, per };
+}
+
+/** Whether a crossfade write should run (pickup/scale defer until grab). */
+export function shouldApplyCrossfade(xfGrab, sliderMode, opts = {}) {
+  if (opts.force) return true;
+  if (!xfGrab && sliderMode !== "jump") return false;
+  return true;
 }
