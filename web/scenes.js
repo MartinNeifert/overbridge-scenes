@@ -13,7 +13,10 @@ import {
   clamp,
   computeCrossfadeUpdates,
   beginXfGrab as beginXfGrabState,
+  DEFAULT_QUAD_CORNERS,
+  crossfaderHasAssignments,
 } from "./scenes-morph.mjs";
+import { bindXfPad, updatePadHandle } from "./scenes-xf-pad.mjs";
 
 const STORE_PREFIX = "ob-scenes:v1:";
 const SCENE_SLOTS = 4;
@@ -39,7 +42,20 @@ let liveParams = []; // [{index,id,name,value,display,min,max,unit,...}]
 const liveByIndex = new Map(); // index -> snapshot
 
 let scenes = freshScenes(); // fixed 4 slots
-let crossfader = { a: null, b: null, pos: 0 }; // a/b = scene id | null, pos 0..1
+
+function freshCrossfader() {
+  return {
+    mode: "ab",
+    a: null,
+    b: null,
+    pos: 0,
+    corners: { ...DEFAULT_QUAD_CORNERS },
+    x: 0.5,
+    y: 0.5,
+  };
+}
+
+let crossfader = freshCrossfader();
 let baseline = new Map(); // index -> pattern baseline value, used when a crossfader side has no scene / value
 let storedBaseline = null; // raw [{index,id,value}] from storage, awaiting resolution against live params
 let baselineResolved = false; // true once this pattern's baseline is loaded or auto-seeded
@@ -64,12 +80,27 @@ let xfGrab = null;
 // ---------------------------------------------------------------------------
 
 const el = {
+  xfMode: document.getElementById("sc-xf-mode"),
+  xfAb: document.getElementById("sc-xf-ab"),
+  xfQuad: document.getElementById("sc-xf-quad"),
+  xfAbFooter: document.getElementById("sc-xf-ab-footer"),
   assignA: document.getElementById("sc-assign-a"),
   assignB: document.getElementById("sc-assign-b"),
+  assignTl: document.getElementById("sc-assign-tl"),
+  assignTr: document.getElementById("sc-assign-tr"),
+  assignBl: document.getElementById("sc-assign-bl"),
+  assignBr: document.getElementById("sc-assign-br"),
   crossfader: document.getElementById("sc-crossfader"),
   percent: document.getElementById("sc-xf-percent"),
+  quadReadout: document.getElementById("sc-xf-quad-readout"),
   nameA: document.getElementById("sc-xf-name-a"),
   nameB: document.getElementById("sc-xf-name-b"),
+  xfPad: document.getElementById("sc-xf-pad"),
+  xfPadHandle: document.getElementById("sc-xf-pad-handle"),
+  xfPadLabelTl: document.getElementById("sc-xf-pad-label-tl"),
+  xfPadLabelTr: document.getElementById("sc-xf-pad-label-tr"),
+  xfPadLabelBl: document.getElementById("sc-xf-pad-label-bl"),
+  xfPadLabelBr: document.getElementById("sc-xf-pad-label-br"),
   jumpA: document.getElementById("sc-jump-a"),
   jumpCenter: document.getElementById("sc-jump-center"),
   jumpB: document.getElementById("sc-jump-b"),
@@ -248,7 +279,12 @@ async function persistActivePattern() {
 function snapshotScenesPayload() {
   return {
     scenes,
-    crossfader: { a: crossfader.a, b: crossfader.b },
+    crossfader: {
+      mode: crossfader.mode,
+      a: crossfader.a,
+      b: crossfader.b,
+      corners: { ...crossfader.corners },
+    },
     baseline: { explicit: baselineExplicit, values: serializeBaseline() },
   };
 }
@@ -272,8 +308,18 @@ function applyScenesPayload(data) {
     }
   }
   if (data.crossfader) {
+    crossfader.mode = data.crossfader.mode === "quad" ? "quad" : "ab";
     crossfader.a = data.crossfader.a ?? null;
     crossfader.b = data.crossfader.b ?? null;
+    if (data.crossfader.corners) {
+      const c = data.crossfader.corners;
+      crossfader.corners = {
+        tl: c.tl ?? DEFAULT_QUAD_CORNERS.tl,
+        tr: c.tr ?? DEFAULT_QUAD_CORNERS.tr,
+        bl: c.bl ?? DEFAULT_QUAD_CORNERS.bl,
+        br: c.br ?? DEFAULT_QUAD_CORNERS.br,
+      };
+    }
   }
   if (data.baseline) {
     if (Array.isArray(data.baseline)) {
@@ -355,7 +401,7 @@ function flushScenesOnExit() {
 async function load() {
   const gen = ++loadGeneration;
   scenes = freshScenes();
-  crossfader = { a: null, b: null, pos: 0 };
+  crossfader = freshCrossfader();
   baseline = new Map();
   storedBaseline = null;
   baselineResolved = false;
@@ -684,9 +730,31 @@ function assignOptionsHtml(selected) {
   return html;
 }
 
+function isQuadMode() {
+  return crossfader.mode === "quad";
+}
+
+function sceneCornerRole(id) {
+  if (!isQuadMode()) return null;
+  for (const [corner, sceneId] of Object.entries(crossfader.corners)) {
+    if (sceneId === id) return corner;
+  }
+  return null;
+}
+
+function cornerSceneName(corner) {
+  const scene = sceneById(crossfader.corners[corner]);
+  return scene ? scene.name : "Baseline";
+}
+
 function renderAssign() {
   el.assignA.innerHTML = assignOptionsHtml(crossfader.a);
   el.assignB.innerHTML = assignOptionsHtml(crossfader.b);
+  if (el.assignTl) el.assignTl.innerHTML = assignOptionsHtml(crossfader.corners.tl);
+  if (el.assignTr) el.assignTr.innerHTML = assignOptionsHtml(crossfader.corners.tr);
+  if (el.assignBl) el.assignBl.innerHTML = assignOptionsHtml(crossfader.corners.bl);
+  if (el.assignBr) el.assignBr.innerHTML = assignOptionsHtml(crossfader.corners.br);
+  if (el.xfMode) el.xfMode.value = crossfader.mode;
   el.activeScene.innerHTML = scenes
     .map(
       (s) =>
@@ -701,7 +769,32 @@ function renderAssign() {
   }
 }
 
+function renderCrossfaderLayout() {
+  const quad = isQuadMode();
+  el.xfAb?.classList.toggle("hidden", quad);
+  el.xfQuad?.classList.toggle("hidden", !quad);
+  el.xfAbFooter?.classList.toggle("hidden", quad);
+}
+
+function renderQuadPadLabels() {
+  if (!el.xfPadLabelTl) return;
+  el.xfPadLabelTl.textContent = cornerSceneName("tl");
+  el.xfPadLabelTr.textContent = cornerSceneName("tr");
+  el.xfPadLabelBl.textContent = cornerSceneName("bl");
+  el.xfPadLabelBr.textContent = cornerSceneName("br");
+}
+
 function renderCrossfaderReadout() {
+  renderCrossfaderLayout();
+  if (isQuadMode()) {
+    const xPct = Math.round(crossfader.x * 100);
+    const yPct = Math.round(crossfader.y * 100);
+    if (el.quadReadout) el.quadReadout.textContent = `${xPct}% · ${yPct}%`;
+    renderQuadPadLabels();
+    updatePadHandle(el.xfPad, el.xfPadHandle, crossfader.x, crossfader.y);
+    return;
+  }
+
   const pct = Math.round(crossfader.pos * 100);
   const a = sceneById(crossfader.a);
   const b = sceneById(crossfader.b);
@@ -743,11 +836,29 @@ function renderSceneCard(scene) {
   const card = document.createElement("div");
   const isA = crossfader.a === scene.id;
   const isB = crossfader.b === scene.id;
+  const corner = sceneCornerRole(scene.id);
+  const cornerClass = corner ? ` assigned-${corner}` : "";
   card.className =
-    "sc-scene" + (isA ? " assigned-a" : "") + (isB ? " assigned-b" : "");
+    "sc-scene" +
+    (isA ? " assigned-a" : "") +
+    (isB ? " assigned-b" : "") +
+    cornerClass;
 
-  const badge = isA && isB ? "AB" : isA ? "A" : isB ? "B" : "";
-  const badgeClass = isA ? "a" : isB ? "b" : "";
+  let badge = "";
+  let badgeClass = "";
+  if (isQuadMode() && corner) {
+    badge = corner.toUpperCase();
+    badgeClass = ` corner-${corner}`;
+  } else if (isA && isB) {
+    badge = "AB";
+    badgeClass = " a";
+  } else if (isA) {
+    badge = "A";
+    badgeClass = " a";
+  } else if (isB) {
+    badge = "B";
+    badgeClass = " b";
+  }
   const badgeHtml = badge
     ? `<span class="sc-scene-badge ${badgeClass}">${badge}</span>`
     : `<span class="sc-scene-badge">${scene.id}</span>`;
@@ -1062,13 +1173,19 @@ function afterSceneMutation() {
   renderScenes();
   renderResults();
   ensureBaselineCoverage();
-  if (crossfader.a || crossfader.b) {
+  if (crossfaderHasAssignments(crossfader, scenes)) {
     applyCrossfade();
   }
 }
 
 function reapplyIfAssigned(scene) {
-  if (crossfader.a === scene.id || crossfader.b === scene.id) applyCrossfade();
+  if (crossfader.a === scene.id || crossfader.b === scene.id) {
+    applyCrossfade();
+    return;
+  }
+  if (isQuadMode() && Object.values(crossfader.corners).includes(scene.id)) {
+    applyCrossfade();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1091,6 +1208,47 @@ el.assignB.addEventListener("change", () => {
   renderScenes();
   renderCrossfaderReadout();
   applyCrossfade();
+});
+
+function onCornerAssignChange(corner, selectEl) {
+  crossfader.corners[corner] = selectEl.value || null;
+  save();
+  ensureBaselineCoverage();
+  renderScenes();
+  renderCrossfaderReadout();
+  applyCrossfade();
+}
+
+el.assignTl?.addEventListener("change", () => onCornerAssignChange("tl", el.assignTl));
+el.assignTr?.addEventListener("change", () => onCornerAssignChange("tr", el.assignTr));
+el.assignBl?.addEventListener("change", () => onCornerAssignChange("bl", el.assignBl));
+el.assignBr?.addEventListener("change", () => onCornerAssignChange("br", el.assignBr));
+
+el.xfMode?.addEventListener("change", () => {
+  crossfader.mode = el.xfMode.value === "quad" ? "quad" : "ab";
+  save();
+  renderCrossfaderReadout();
+  renderScenes();
+  if (crossfaderHasAssignments(crossfader, scenes)) applyCrossfade();
+});
+
+function setQuadPos(x, y) {
+  crossfader.x = clamp(x, 0, 1);
+  crossfader.y = clamp(y, 0, 1);
+}
+
+bindXfPad(el.xfPad, el.xfPadHandle, {
+  getPos: () => ({ x: crossfader.x, y: crossfader.y }),
+  setPos: (x, y) => setQuadPos(x, y),
+  onGrabStart: () => {
+    pauseClockSlideManual();
+    beginXfGrab();
+  },
+  onGrabEnd: endXfGrab,
+  onChange: () => {
+    renderCrossfaderReadout();
+    applyCrossfade();
+  },
 });
 
 el.crossfader.addEventListener("pointerdown", () => {

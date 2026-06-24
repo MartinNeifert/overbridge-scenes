@@ -25,7 +25,7 @@
         </select>
       </label>
       <button type="button" class="ob-theme-toggle" aria-label="Switch to light theme">Light</button>
-      <a class="sc-link" href="/remote.html" title="Crossfader-only page for phone/tablet on your Wi‑Fi">Remote slider →</a>
+      <a class="sc-link" href="/remote.html" title="Crossfader-only page for phone/tablet on your Wi‑Fi">Remote crossfader →</a>
       <a class="sc-link" href="/">Classic control surface →</a>
     </div>
   </header>
@@ -51,34 +51,78 @@
 
   <!-- Crossfader -->
   <section class="sc-crossfader-panel">
-    <div class="sc-xf-assign">
-      <label class="sc-assign sc-assign-a">
-        <span class="sc-assign-label">Scene A <em>(left)</em></span>
-        <select id="sc-assign-a" aria-label="Assign scene A"></select>
+    <div class="sc-xf-modebar">
+      <label class="sc-xf-mode">
+        <span class="sc-picker-label">Crossfader</span>
+        <select id="sc-xf-mode" aria-label="Crossfader mode">
+          <option value="ab">2 scenes (A/B)</option>
+          <option value="quad">4 scenes (grid)</option>
+        </select>
       </label>
+    </div>
 
-      <div class="sc-xf-readout">
-        <div id="sc-xf-percent" class="sc-xf-percent">A · 0%</div>
-        <div class="sc-xf-jumprow">
-          <button id="sc-jump-a" class="sc-btn sc-btn-ghost" title="Snap crossfader fully to Scene A">⟵ A</button>
-          <button id="sc-jump-center" class="sc-btn sc-btn-ghost" title="Center crossfader">·</button>
-          <button id="sc-jump-b" class="sc-btn sc-btn-ghost" title="Snap crossfader fully to Scene B">B ⟶</button>
+    <div class="sc-xf-ab" id="sc-xf-ab">
+      <div class="sc-xf-assign">
+        <label class="sc-assign sc-assign-a">
+          <span class="sc-assign-label">Scene A <em>(left)</em></span>
+          <select id="sc-assign-a" aria-label="Assign scene A"></select>
+        </label>
+
+        <div class="sc-xf-readout">
+          <div id="sc-xf-percent" class="sc-xf-percent">A · 0%</div>
+          <div class="sc-xf-jumprow">
+            <button id="sc-jump-a" class="sc-btn sc-btn-ghost" title="Snap crossfader fully to Scene A">⟵ A</button>
+            <button id="sc-jump-center" class="sc-btn sc-btn-ghost" title="Center crossfader">·</button>
+            <button id="sc-jump-b" class="sc-btn sc-btn-ghost" title="Snap crossfader fully to Scene B">B ⟶</button>
+          </div>
         </div>
+
+        <label class="sc-assign sc-assign-b">
+          <span class="sc-assign-label">Scene B <em>(right)</em></span>
+          <select id="sc-assign-b" aria-label="Assign scene B"></select>
+        </label>
       </div>
 
-      <label class="sc-assign sc-assign-b">
-        <span class="sc-assign-label">Scene B <em>(right)</em></span>
-        <select id="sc-assign-b" aria-label="Assign scene B"></select>
-      </label>
+      <div class="sc-xf-track">
+        <span class="sc-xf-name sc-xf-name-a" id="sc-xf-name-a" title="Scene A">Baseline</span>
+        <input type="range" id="sc-crossfader" min="0" max="1000" step="1" value="0" aria-label="Crossfader" />
+        <span class="sc-xf-name sc-xf-name-b" id="sc-xf-name-b" title="Scene B">Baseline</span>
+      </div>
     </div>
 
-    <div class="sc-xf-track">
-      <span class="sc-xf-name sc-xf-name-a" id="sc-xf-name-a" title="Scene A">Baseline</span>
-      <input type="range" id="sc-crossfader" min="0" max="1000" step="1" value="0" aria-label="Crossfader" />
-      <span class="sc-xf-name sc-xf-name-b" id="sc-xf-name-b" title="Scene B">Baseline</span>
+    <div class="sc-xf-quad hidden" id="sc-xf-quad">
+      <div class="sc-xf-quad-assign">
+        <label class="sc-assign sc-assign-corner sc-assign-tl">
+          <span class="sc-assign-label">Top left</span>
+          <select id="sc-assign-tl" aria-label="Assign top-left scene"></select>
+        </label>
+        <label class="sc-assign sc-assign-corner sc-assign-tr">
+          <span class="sc-assign-label">Top right</span>
+          <select id="sc-assign-tr" aria-label="Assign top-right scene"></select>
+        </label>
+        <label class="sc-assign sc-assign-corner sc-assign-bl">
+          <span class="sc-assign-label">Bottom left</span>
+          <select id="sc-assign-bl" aria-label="Assign bottom-left scene"></select>
+        </label>
+        <label class="sc-assign sc-assign-corner sc-assign-br">
+          <span class="sc-assign-label">Bottom right</span>
+          <select id="sc-assign-br" aria-label="Assign bottom-right scene"></select>
+        </label>
+      </div>
+
+      <div class="sc-xf-pad-wrap">
+        <div class="sc-xf-pad" id="sc-xf-pad" aria-label="2D crossfader grid">
+          <span class="sc-xf-pad-corner sc-xf-pad-tl" id="sc-xf-pad-label-tl"></span>
+          <span class="sc-xf-pad-corner sc-xf-pad-tr" id="sc-xf-pad-label-tr"></span>
+          <span class="sc-xf-pad-corner sc-xf-pad-bl" id="sc-xf-pad-label-bl"></span>
+          <span class="sc-xf-pad-corner sc-xf-pad-br" id="sc-xf-pad-label-br"></span>
+          <div class="sc-xf-pad-handle" id="sc-xf-pad-handle"></div>
+        </div>
+        <div class="sc-xf-quad-readout" id="sc-xf-quad-readout">50% · 50%</div>
+      </div>
     </div>
 
-    <div class="sc-xf-footer">
+    <div class="sc-xf-footer sc-xf-ab-only" id="sc-xf-ab-footer">
       <div class="sc-xf-clock-controls">
         <label class="sc-xf-clock-slide" title="Drive the crossfader from MIDI clock — syncs on Play (Start). Set Bars to match your pattern length.">
           <input type="checkbox" id="sc-clock-slide" />
