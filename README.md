@@ -74,6 +74,11 @@ parameter name yet.
   Settings → General → Sharing → Local Hostname**) or use the IP from startup
   logs. Follows the active pattern from the desktop UI; override with
   `?pattern=B05`.
+- **OB Scenes Remote VST** — a thin VST3 plugin for your DAW rack that proxies
+  the crossfader to ob-host over HTTP. Run ob-host separately; automate
+  **Crossfader** in Ableton while the host owns scenes and hardware sync. Build
+  with `./scripts/build-remote-vst.sh` and install the bundle to
+  `~/Library/Audio/Plug-Ins/VST3/`.
 - **Live, bidirectional** — hardware moves show up in the UI; UI writes hit the
   device. Default control-only mode leaves device audio to the hardware (or your
   DAW) while the host handles parameters.
@@ -118,7 +123,12 @@ hardware's own mix, and a DAW can use Overbridge USB audio in parallel.
                                               (params / MIDI only)
 
   Device audio: analog Main Out ←── hardware mix (or your DAW's Overbridge I/O)
+
+  DAW rack (optional): OB Scenes Remote.vst3 ──HTTP──► ob-host :7780
 ```
+
+The **OB Scenes Remote** VST does not load Digitakt or touch audio — it only
+sends crossfader positions to the running host (`POST /api/crossfader/apply`).
 
 Parameters are delivered through the edit controller (same path as the plugin
 GUI), driven by the hidden editor + main run-loop pump. No `process()` call,

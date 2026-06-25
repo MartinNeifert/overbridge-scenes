@@ -70,6 +70,32 @@ curl -X POST http://127.0.0.1:7780/api/parameters/batch \
   -d '{"updates": [{"index": 8, "value": 0.25}, {"index": 12, "value": 0.6}]}'
 ```
 
+### Apply scenes crossfader (server-side morph)
+
+Computes a crossfader morph from the stored scenes document and applies it in
+one batch. Used by the **OB Scenes Remote** VST plugin for Ableton automation.
+
+```bash
+curl -X POST http://127.0.0.1:7780/api/crossfader/apply \
+  -H 'Content-Type: application/json' \
+  -d '{"pos": 0.5}'
+```
+
+Optional fields:
+
+- `pattern` — pattern key (`A01`…`P16`). Defaults to the active pattern from
+  the scenes UI.
+- `pos` — A/B crossfader position (0..1). Uses the stored position when omitted.
+- `x`, `y` — quad pad position (0..1) when the stored crossfader mode is `quad`.
+
+Response:
+
+```json
+{"pattern": "A01", "applied": 12}
+```
+
+`applied` is the number of parameters written (0 when no scenes are assigned).
+
 ### Send MIDI
 
 ```bash
