@@ -14,9 +14,14 @@ import {
   computeCrossfadeUpdates,
   beginXfGrab as beginXfGrabState,
   DEFAULT_QUAD_CORNERS,
+  DEFAULT_QUAD_CENTER_MODE,
+  DEFAULT_QUAD_RELEASE_SNAP,
+  DEFAULT_QUAD_RELEASE_SNAP_MS,
+  normalizeCrossfader,
+  quadSnapPosition,
   crossfaderHasAssignments,
 } from "./scenes-morph.mjs";
-import { bindXfPad, updatePadHandle } from "./scenes-xf-pad.mjs";
+import { bindXfPad, updatePadHandle, animatePadPosition } from "./scenes-xf-pad.mjs";
 
 const STORE_PREFIX = "ob-scenes:v1:";
 const SCENE_SLOTS = 4;
@@ -52,6 +57,9 @@ function freshCrossfader() {
     corners: { ...DEFAULT_QUAD_CORNERS },
     x: 0.5,
     y: 0.5,
+    quadCenterMode: DEFAULT_QUAD_CENTER_MODE,
+    quadReleaseSnap: DEFAULT_QUAD_RELEASE_SNAP,
+    quadReleaseSnapMs: DEFAULT_QUAD_RELEASE_SNAP_MS,
   };
 }
 
@@ -74,6 +82,7 @@ let activeSliderDrag = 0; // >0 while a scene slider is held — blocks row rebu
 // { t0, per: Map<index, {v0, engaged}> } — v0 is each param's live value at the
 // moment of grab, so Pickup/Scale reconcile against where the knobs actually are.
 let xfGrab = null;
+let quadSnapCancel = null;
 
 // ---------------------------------------------------------------------------
 // Elements
@@ -101,6 +110,9 @@ const el = {
   xfPadLabelTr: document.getElementById("sc-xf-pad-label-tr"),
   xfPadLabelBl: document.getElementById("sc-xf-pad-label-bl"),
   xfPadLabelBr: document.getElementById("sc-xf-pad-label-br"),
+  quadCenterMode: document.getElementById("sc-quad-center-mode"),
+  quadReleaseSnap: document.getElementById("sc-quad-release-snap"),
+  quadOptionsMeta: document.getElementById("sc-quad-options-meta"),
   jumpA: document.getElementById("sc-jump-a"),
   jumpCenter: document.getElementById("sc-jump-center"),
   jumpB: document.getElementById("sc-jump-b"),
@@ -284,6 +296,11 @@ function snapshotScenesPayload() {
       a: crossfader.a,
       b: crossfader.b,
       corners: { ...crossfader.corners },
+      x: crossfader.x,
+      y: crossfader.y,
+      quadCenterMode: crossfader.quadCenterMode,
+      quadReleaseSnap: crossfader.quadReleaseSnap,
+      quadReleaseSnapMs: crossfader.quadReleaseSnapMs,
     },
     baseline: { explicit: baselineExplicit, values: serializeBaseline() },
   };
@@ -308,18 +325,16 @@ function applyScenesPayload(data) {
     }
   }
   if (data.crossfader) {
-    crossfader.mode = data.crossfader.mode === "quad" ? "quad" : "ab";
-    crossfader.a = data.crossfader.a ?? null;
-    crossfader.b = data.crossfader.b ?? null;
-    if (data.crossfader.corners) {
-      const c = data.crossfader.corners;
-      crossfader.corners = {
-        tl: c.tl ?? DEFAULT_QUAD_CORNERS.tl,
-        tr: c.tr ?? DEFAULT_QUAD_CORNERS.tr,
-        bl: c.bl ?? DEFAULT_QUAD_CORNERS.bl,
-        br: c.br ?? DEFAULT_QUAD_CORNERS.br,
-      };
-    }
+    const normalized = normalizeCrossfader(data.crossfader);
+    crossfader.mode = normalized.mode;
+    crossfader.a = normalized.a;
+    crossfader.b = normalized.b;
+    crossfader.corners = { ...normalized.corners };
+    crossfader.x = normalized.x;
+    crossfader.y = normalized.y;
+    crossfader.quadCenterMode = normalized.quadCenterMode;
+    crossfader.quadReleaseSnap = normalized.quadReleaseSnap;
+    crossfader.quadReleaseSnapMs = normalized.quadReleaseSnapMs;
   }
   if (data.baseline) {
     if (Array.isArray(data.baseline)) {
@@ -578,8 +593,54 @@ function beginXfGrab() {
   xfGrab = beginXfGrabState(crossfader, scenes, morphCtx());
 }
 
+function cancelQuadSnap() {
+  if (quadSnapCancel) {
+    quadSnapCancel();
+    quadSnapCancel = null;
+  }
+}
+
 function endXfGrab() {
   xfGrab = null;
+}
+
+function onQuadGrabEnd() {
+  endXfGrab();
+  if (!isQuadMode()) return;
+
+  const snap = crossfader.quadReleaseSnap ?? DEFAULT_QUAD_RELEASE_SNAP;
+  const target = quadSnapPosition(snap);
+  if (!target) return;
+
+  if (
+    Math.abs(crossfader.x - target.x) < EPS &&
+    Math.abs(crossfader.y - target.y) < EPS
+  ) {
+    return;
+  }
+
+  cancelQuadSnap();
+  const fromX = crossfader.x;
+  const fromY = crossfader.y;
+  const durationMs = crossfader.quadReleaseSnapMs ?? DEFAULT_QUAD_RELEASE_SNAP_MS;
+
+  quadSnapCancel = animatePadPosition(
+    fromX,
+    fromY,
+    target.x,
+    target.y,
+    durationMs,
+    (x, y) => {
+      setQuadPos(x, y);
+      updatePadHandle(el.xfPad, el.xfPadHandle, x, y);
+      renderCrossfaderReadout();
+      applyCrossfade();
+    },
+    () => {
+      quadSnapCancel = null;
+      save();
+    }
+  );
 }
 
 function applyCrossfade() {
@@ -747,6 +808,34 @@ function cornerSceneName(corner) {
   return scene ? scene.name : "Baseline";
 }
 
+function quadCenterModeLabel(mode) {
+  return mode === "baseline" ? "Baseline" : "Scene blend";
+}
+
+function quadReleaseSnapLabel(snap) {
+  switch (snap) {
+    case "none":
+      return "Stay";
+    case "tl":
+      return "Snap TL";
+    case "tr":
+      return "Snap TR";
+    case "bl":
+      return "Snap BL";
+    case "br":
+      return "Snap BR";
+    default:
+      return "Return center";
+  }
+}
+
+function renderQuadOptionsMeta() {
+  if (!el.quadOptionsMeta) return;
+  el.quadOptionsMeta.textContent = `${quadCenterModeLabel(crossfader.quadCenterMode)} · ${quadReleaseSnapLabel(
+    crossfader.quadReleaseSnap
+  )}`;
+}
+
 function renderAssign() {
   el.assignA.innerHTML = assignOptionsHtml(crossfader.a);
   el.assignB.innerHTML = assignOptionsHtml(crossfader.b);
@@ -755,6 +844,9 @@ function renderAssign() {
   if (el.assignBl) el.assignBl.innerHTML = assignOptionsHtml(crossfader.corners.bl);
   if (el.assignBr) el.assignBr.innerHTML = assignOptionsHtml(crossfader.corners.br);
   if (el.xfMode) el.xfMode.value = crossfader.mode;
+  if (el.quadCenterMode) el.quadCenterMode.value = crossfader.quadCenterMode;
+  if (el.quadReleaseSnap) el.quadReleaseSnap.value = crossfader.quadReleaseSnap;
+  renderQuadOptionsMeta();
   el.activeScene.innerHTML = scenes
     .map(
       (s) =>
@@ -1241,14 +1333,28 @@ bindXfPad(el.xfPad, el.xfPadHandle, {
   getPos: () => ({ x: crossfader.x, y: crossfader.y }),
   setPos: (x, y) => setQuadPos(x, y),
   onGrabStart: () => {
+    cancelQuadSnap();
     pauseClockSlideManual();
     beginXfGrab();
   },
-  onGrabEnd: endXfGrab,
+  onGrabEnd: onQuadGrabEnd,
   onChange: () => {
     renderCrossfaderReadout();
     applyCrossfade();
   },
+});
+
+el.quadCenterMode?.addEventListener("change", () => {
+  crossfader.quadCenterMode = el.quadCenterMode.value;
+  renderQuadOptionsMeta();
+  save();
+  if (crossfaderHasAssignments(crossfader, scenes)) applyCrossfade();
+});
+
+el.quadReleaseSnap?.addEventListener("change", () => {
+  crossfader.quadReleaseSnap = el.quadReleaseSnap.value;
+  renderQuadOptionsMeta();
+  save();
 });
 
 el.crossfader.addEventListener("pointerdown", () => {

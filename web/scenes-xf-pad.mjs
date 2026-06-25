@@ -81,3 +81,28 @@ export function bindXfPad(pad, handle, opts) {
     pad.removeEventListener("pointercancel", onPointerUp);
   };
 }
+
+/**
+ * Ease-out cubic animation from one pad position to another.
+ * @returns {() => void} cancel
+ */
+export function animatePadPosition(fromX, fromY, toX, toY, durationMs, onFrame, onDone) {
+  let cancelled = false;
+  const t0 = performance.now();
+
+  function frame(now) {
+    if (cancelled) return;
+    const t = durationMs <= 0 ? 1 : clamp((now - t0) / durationMs, 0, 1);
+    const eased = 1 - (1 - t) ** 3;
+    const x = fromX + (toX - fromX) * eased;
+    const y = fromY + (toY - fromY) * eased;
+    onFrame(x, y);
+    if (t < 1) requestAnimationFrame(frame);
+    else onDone?.();
+  }
+
+  requestAnimationFrame(frame);
+  return () => {
+    cancelled = true;
+  };
+}

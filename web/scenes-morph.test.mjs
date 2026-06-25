@@ -4,6 +4,9 @@ import {
   clamp,
   unionIndices,
   bilinearWeights,
+  bilinearWeightsAssigned,
+  isQuadCenter,
+  quadSnapPosition,
   computeCrossfadeUpdates,
   computeQuadUpdates,
   morphParamValue,
@@ -186,6 +189,63 @@ describe("quad crossfader morph", () => {
       ctx()
     );
     assert.equal(updates.length, 0);
+  });
+
+  it("interpolation mode averages assigned scenes at center when corners are missing", () => {
+    const updates = computeQuadUpdates(
+      {
+        mode: "quad",
+        quadCenterMode: "interpolation",
+        corners: { tl: "1", tr: null, bl: null, br: "4" },
+        x: 0.5,
+        y: 0.5,
+      },
+      scenes,
+      ctx()
+    );
+    const cutoff = updates.find((u) => u.index === 0);
+    assert.ok(cutoff);
+    assert.ok(Math.abs(cutoff.value - 0.5) < 1e-6);
+  });
+
+  it("baseline mode uses pattern baseline at center", () => {
+    const updates = computeQuadUpdates(
+      {
+        mode: "quad",
+        quadCenterMode: "baseline",
+        corners: { tl: "1", tr: "2", bl: "3", br: "4" },
+        x: 0.5,
+        y: 0.5,
+      },
+      scenes,
+      ctx({
+        baselineExplicit: true,
+        baseline: new Map([[0, 0.25]]),
+        liveValues: new Map([[0, 0.9]]),
+      })
+    );
+    const cutoff = updates.find((u) => u.index === 0);
+    assert.ok(cutoff);
+    assert.ok(Math.abs(cutoff.value - 0.25) < 1e-6);
+  });
+
+  it("bilinearWeightsAssigned renormalizes when corners are missing", () => {
+    const w = bilinearWeightsAssigned(0.5, 0.5, { tl: true, tr: false, bl: false, br: true });
+    assert.ok(Math.abs(w.tl - 0.5) < 1e-9);
+    assert.ok(Math.abs(w.br - 0.5) < 1e-9);
+    assert.equal(w.tr, 0);
+    assert.equal(w.bl, 0);
+  });
+
+  it("isQuadCenter detects grid middle", () => {
+    assert.equal(isQuadCenter(0.5, 0.5), true);
+    assert.equal(isQuadCenter(0.49, 0.5), false);
+  });
+
+  it("quadSnapPosition maps release targets", () => {
+    assert.deepEqual(quadSnapPosition("center"), { x: 0.5, y: 0.5 });
+    assert.deepEqual(quadSnapPosition("tl"), { x: 0, y: 0 });
+    assert.equal(quadSnapPosition("none"), null);
   });
 });
 

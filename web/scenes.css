@@ -264,6 +264,56 @@ body {
 
 .sc-assign-corner select { width: 100%; }
 
+.sc-xf-quad-options-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg) 55%, var(--surface));
+  overflow: hidden;
+  margin-bottom: 0.85rem;
+}
+
+.sc-xf-quad-options-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  user-select: none;
+  list-style: none;
+}
+
+.sc-xf-quad-options-panel[open] > .sc-xf-quad-options-summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.sc-xf-quad-options-summary::-webkit-details-marker {
+  display: none;
+}
+
+.sc-xf-quad-options-meta {
+  font-weight: 400;
+  font-size: 0.72rem;
+}
+
+.sc-xf-quad-options-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  padding: 0.75rem;
+}
+
+.sc-xf-quad-opt {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 9rem;
+}
+
+.sc-xf-quad-opt select { min-width: 10rem; }
+
 .sc-xf-pad-wrap {
   display: flex;
   flex-direction: column;

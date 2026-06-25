@@ -13,6 +13,15 @@ export const EPS = 1e-4;
 
 export const DEFAULT_QUAD_CORNERS = { tl: "1", tr: "2", bl: "3", br: "4" };
 
+/** What the grid center (0.5, 0.5) morphs toward. */
+export const QUAD_CENTER_MODES = ["interpolation", "baseline"];
+/** Where the pad handle moves after pointer release (`none` = stay put). */
+export const QUAD_RELEASE_SNAPS = ["none", "center", "tl", "tr", "bl", "br"];
+
+export const DEFAULT_QUAD_CENTER_MODE = "interpolation";
+export const DEFAULT_QUAD_RELEASE_SNAP = "center";
+export const DEFAULT_QUAD_RELEASE_SNAP_MS = 400;
+
 export function clamp(v, lo, hi) {
   return Math.min(hi, Math.max(lo, v));
 }
@@ -26,9 +35,18 @@ export function crossfaderMode(crossfader) {
   return crossfader?.mode === "quad" ? "quad" : "ab";
 }
 
+export function normalizeQuadCenterMode(mode) {
+  return mode === "baseline" ? "baseline" : DEFAULT_QUAD_CENTER_MODE;
+}
+
+export function normalizeQuadReleaseSnap(snap) {
+  return QUAD_RELEASE_SNAPS.includes(snap) ? snap : DEFAULT_QUAD_RELEASE_SNAP;
+}
+
 export function normalizeCrossfader(crossfader = {}) {
   const mode = crossfaderMode(crossfader);
   const corners = { ...DEFAULT_QUAD_CORNERS, ...(crossfader.corners || {}) };
+  const snapMs = Number(crossfader.quadReleaseSnapMs);
   return {
     mode,
     a: crossfader.a ?? null,
@@ -37,6 +55,9 @@ export function normalizeCrossfader(crossfader = {}) {
     corners,
     x: Number.isFinite(crossfader.x) ? crossfader.x : 0.5,
     y: Number.isFinite(crossfader.y) ? crossfader.y : 0.5,
+    quadCenterMode: normalizeQuadCenterMode(crossfader.quadCenterMode),
+    quadReleaseSnap: normalizeQuadReleaseSnap(crossfader.quadReleaseSnap),
+    quadReleaseSnapMs: Number.isFinite(snapMs) && snapMs >= 0 ? snapMs : DEFAULT_QUAD_RELEASE_SNAP_MS,
   };
 }
 
@@ -66,6 +87,46 @@ export function bilinearWeights(x, y) {
     bl: (1 - x1) * y1,
     br: x1 * y1,
   };
+}
+
+export function isQuadCenter(x, y) {
+  return Math.abs(x - 0.5) < EPS && Math.abs(y - 0.5) < EPS;
+}
+
+/** Bilinear weights among assigned corners only (renormalized to sum 1). */
+export function bilinearWeightsAssigned(x, y, cornerAssigned) {
+  const raw = bilinearWeights(x, y);
+  let sum = 0;
+  const w = { tl: 0, tr: 0, bl: 0, br: 0 };
+  for (const corner of ["tl", "tr", "bl", "br"]) {
+    if (cornerAssigned[corner]) {
+      w[corner] = raw[corner];
+      sum += raw[corner];
+    }
+  }
+  if (sum <= EPS) return w;
+  for (const corner of ["tl", "tr", "bl", "br"]) {
+    w[corner] /= sum;
+  }
+  return w;
+}
+
+/** Pad position for a release-snap target. */
+export function quadSnapPosition(target) {
+  switch (target) {
+    case "tl":
+      return { x: 0, y: 0 };
+    case "tr":
+      return { x: 1, y: 0 };
+    case "bl":
+      return { x: 0, y: 1 };
+    case "br":
+      return { x: 1, y: 1 };
+    case "center":
+      return { x: 0.5, y: 0.5 };
+    default:
+      return null;
+  }
 }
 
 /**
@@ -176,15 +237,36 @@ export function morphParamValue(
   return clamp(value, Math.min(min, max), Math.max(min, max));
 }
 
-export function morphQuadParamValue(index, x, y, cornerScenes, ctx) {
-  const w = bilinearWeights(x, y);
+export function morphQuadParamValue(index, x, y, cornerScenes, ctx, centerMode = DEFAULT_QUAD_CENTER_MODE) {
+  const mode = normalizeQuadCenterMode(centerMode);
+  const [min, max] = paramRange(index, ctx.paramRanges);
+  const clamped = (v) => clamp(v, Math.min(min, max), Math.max(min, max));
+
+  if (mode === "baseline" && isQuadCenter(x, y)) {
+    return clamped(baseValue(index, ctx));
+  }
+
+  const cornerAssigned = {
+    tl: !!cornerScenes.tl,
+    tr: !!cornerScenes.tr,
+    bl: !!cornerScenes.bl,
+    br: !!cornerScenes.br,
+  };
+
+  const w =
+    mode === "interpolation"
+      ? bilinearWeightsAssigned(x, y, cornerAssigned)
+      : bilinearWeights(x, y);
+
+  const weightSum = w.tl + w.tr + w.bl + w.br;
+  if (weightSum <= EPS) return clamped(baseValue(index, ctx));
+
   let value = 0;
   value += w.tl * endpointValue(cornerScenes.tl, index, ctx);
   value += w.tr * endpointValue(cornerScenes.tr, index, ctx);
   value += w.bl * endpointValue(cornerScenes.bl, index, ctx);
   value += w.br * endpointValue(cornerScenes.br, index, ctx);
-  const [min, max] = paramRange(index, ctx.paramRanges);
-  return clamp(value, Math.min(min, max), Math.max(min, max));
+  return clamped(value);
 }
 
 export function paramRange(index, paramRanges) {
@@ -238,11 +320,12 @@ export function computeQuadUpdates(crossfader, scenes, ctx) {
   };
   const x = crossfader.x ?? 0.5;
   const y = crossfader.y ?? 0.5;
+  const centerMode = normalizeQuadCenterMode(crossfader.quadCenterMode);
   const updates = [];
   for (const index of unionIndices(crossfader, scenes)) {
     updates.push({
       index,
-      value: morphQuadParamValue(index, x, y, cornerScenes, ctx),
+      value: morphQuadParamValue(index, x, y, cornerScenes, ctx, centerMode),
     });
   }
   return updates;

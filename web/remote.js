@@ -5,8 +5,14 @@ import {
   clamp,
   computeCrossfadeUpdates,
   DEFAULT_QUAD_CORNERS,
+  DEFAULT_QUAD_RELEASE_SNAP,
+  DEFAULT_QUAD_RELEASE_SNAP_MS,
+  normalizeCrossfader,
+  quadSnapPosition,
 } from "./scenes-morph.mjs";
-import { bindXfPad, updatePadHandle } from "./scenes-xf-pad.mjs";
+import { bindXfPad, updatePadHandle, animatePadPosition } from "./scenes-xf-pad.mjs";
+
+const EPS = 1e-4;
 
 const SCENE_SLOTS = 4;
 
@@ -26,6 +32,7 @@ let ws = null;
 const pendingApply = new Map();
 let flushScheduled = false;
 let xfGrab = null;
+let quadSnapCancel = null;
 
 const el = {
   ab: document.getElementById("remote-ab"),
@@ -65,6 +72,9 @@ function freshCrossfader() {
     corners: { ...DEFAULT_QUAD_CORNERS },
     x: 0.5,
     y: 0.5,
+    quadCenterMode: "interpolation",
+    quadReleaseSnap: DEFAULT_QUAD_RELEASE_SNAP,
+    quadReleaseSnapMs: DEFAULT_QUAD_RELEASE_SNAP_MS,
   };
 }
 
@@ -154,18 +164,16 @@ function applyScenesPayload(data) {
     }
   }
   if (data.crossfader) {
-    crossfader.mode = data.crossfader.mode === "quad" ? "quad" : "ab";
-    crossfader.a = data.crossfader.a ?? null;
-    crossfader.b = data.crossfader.b ?? null;
-    if (data.crossfader.corners) {
-      const c = data.crossfader.corners;
-      crossfader.corners = {
-        tl: c.tl ?? DEFAULT_QUAD_CORNERS.tl,
-        tr: c.tr ?? DEFAULT_QUAD_CORNERS.tr,
-        bl: c.bl ?? DEFAULT_QUAD_CORNERS.bl,
-        br: c.br ?? DEFAULT_QUAD_CORNERS.br,
-      };
-    }
+    const normalized = normalizeCrossfader(data.crossfader);
+    crossfader.mode = normalized.mode;
+    crossfader.a = normalized.a;
+    crossfader.b = normalized.b;
+    crossfader.corners = { ...normalized.corners };
+    crossfader.x = normalized.x;
+    crossfader.y = normalized.y;
+    crossfader.quadCenterMode = normalized.quadCenterMode;
+    crossfader.quadReleaseSnap = normalized.quadReleaseSnap;
+    crossfader.quadReleaseSnapMs = normalized.quadReleaseSnapMs;
   }
   if (data.baseline) {
     if (Array.isArray(data.baseline)) {
@@ -236,8 +244,53 @@ function beginXfGrab() {
   xfGrab = null;
 }
 
+function cancelQuadSnap() {
+  if (quadSnapCancel) {
+    quadSnapCancel();
+    quadSnapCancel = null;
+  }
+}
+
 function endXfGrab() {
   xfGrab = null;
+}
+
+function onQuadGrabEnd() {
+  endXfGrab();
+  if (!isQuadMode()) return;
+
+  const snap = crossfader.quadReleaseSnap ?? DEFAULT_QUAD_RELEASE_SNAP;
+  const target = quadSnapPosition(snap);
+  if (!target) return;
+
+  if (
+    Math.abs(crossfader.x - target.x) < EPS &&
+    Math.abs(crossfader.y - target.y) < EPS
+  ) {
+    return;
+  }
+
+  cancelQuadSnap();
+  const fromX = crossfader.x;
+  const fromY = crossfader.y;
+  const durationMs = crossfader.quadReleaseSnapMs ?? DEFAULT_QUAD_RELEASE_SNAP_MS;
+
+  quadSnapCancel = animatePadPosition(
+    fromX,
+    fromY,
+    target.x,
+    target.y,
+    durationMs,
+    (x, y) => {
+      setQuadPos(x, y);
+      updatePadHandle(el.pad, el.padHandle, x, y);
+      renderReadout();
+      applyCrossfade();
+    },
+    () => {
+      quadSnapCancel = null;
+    }
+  );
 }
 
 function queueApply(index, value) {
@@ -428,8 +481,11 @@ el.jumpB?.addEventListener("click", () => jumpTo(1));
 bindXfPad(el.pad, el.padHandle, {
   getPos: () => ({ x: crossfader.x, y: crossfader.y }),
   setPos: (x, y) => setQuadPos(x, y),
-  onGrabStart: beginXfGrab,
-  onGrabEnd: endXfGrab,
+  onGrabStart: () => {
+    cancelQuadSnap();
+    beginXfGrab();
+  },
+  onGrabEnd: onQuadGrabEnd,
   onChange: () => {
     renderReadout();
     applyCrossfade();
