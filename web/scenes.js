@@ -13,6 +13,7 @@ import {
   clamp,
   computeCrossfadeUpdates,
   beginXfGrab as beginXfGrabState,
+  shouldApplyCrossfade,
   DEFAULT_QUAD_CORNERS,
   DEFAULT_QUAD_CENTER_MODE,
   DEFAULT_QUAD_RELEASE_SNAP,
@@ -590,7 +591,9 @@ async function setPattern(bank, num, opts = {}) {
 // ---------------------------------------------------------------------------
 
 function beginXfGrab() {
-  xfGrab = beginXfGrabState(crossfader, scenes, morphCtx());
+  xfGrab = beginXfGrabState(crossfader, scenes, morphCtx(), {
+    ignoreStaleGrab: true,
+  });
 }
 
 function cancelQuadSnap() {
@@ -604,18 +607,34 @@ function endXfGrab() {
   xfGrab = null;
 }
 
+let xfGrabEndTimer = 0;
+function scheduleEndXfGrab() {
+  clearTimeout(xfGrabEndTimer);
+  // Defer until after any trailing range `input` on pointer release.
+  xfGrabEndTimer = setTimeout(() => {
+    xfGrabEndTimer = 0;
+    endXfGrab();
+  }, 0);
+}
+
 function onQuadGrabEnd() {
-  endXfGrab();
-  if (!isQuadMode()) return;
+  if (!isQuadMode()) {
+    scheduleEndXfGrab();
+    return;
+  }
 
   const snap = crossfader.quadReleaseSnap ?? DEFAULT_QUAD_RELEASE_SNAP;
   const target = quadSnapPosition(snap);
-  if (!target) return;
+  if (!target) {
+    scheduleEndXfGrab();
+    return;
+  }
 
   if (
     Math.abs(crossfader.x - target.x) < EPS &&
     Math.abs(crossfader.y - target.y) < EPS
   ) {
+    scheduleEndXfGrab();
     return;
   }
 
@@ -638,13 +657,17 @@ function onQuadGrabEnd() {
     },
     () => {
       quadSnapCancel = null;
+      scheduleEndXfGrab();
       save();
     }
   );
 }
 
-function applyCrossfade() {
-  const updates = computeCrossfadeUpdates(crossfader, scenes, morphCtx(), sliderMode);
+function applyCrossfade(opts = {}) {
+  const force = !!opts.force;
+  if (!shouldApplyCrossfade(xfGrab, sliderMode, { force })) return;
+  const mode = force ? "jump" : sliderMode;
+  const updates = computeCrossfadeUpdates(crossfader, scenes, morphCtx(), mode);
   for (const { index, value } of updates) {
     queueApply(index, value);
   }
@@ -1336,6 +1359,7 @@ bindXfPad(el.xfPad, el.xfPadHandle, {
     cancelQuadSnap();
     pauseClockSlideManual();
     beginXfGrab();
+    applyCrossfade();
   },
   onGrabEnd: onQuadGrabEnd,
   onChange: () => {
@@ -1357,12 +1381,14 @@ el.quadReleaseSnap?.addEventListener("change", () => {
   save();
 });
 
-el.crossfader.addEventListener("pointerdown", () => {
+el.crossfader.addEventListener("pointerdown", (ev) => {
   pauseClockSlideManual();
+  ev.target.setPointerCapture?.(ev.pointerId);
   beginXfGrab();
+  applyCrossfade();
 });
-el.crossfader.addEventListener("pointerup", endXfGrab);
-el.crossfader.addEventListener("pointercancel", endXfGrab);
+el.crossfader.addEventListener("pointerup", scheduleEndXfGrab);
+el.crossfader.addEventListener("pointercancel", scheduleEndXfGrab);
 
 el.crossfader.addEventListener("input", () => {
   pauseClockSlideManual();
@@ -1377,10 +1403,12 @@ el.crossfader.addEventListener("input", () => {
 function jumpTo(pos) {
   pauseClockSlideManual();
   // Jump buttons always snap, regardless of the selected takeover mode.
+  clearTimeout(xfGrabEndTimer);
+  xfGrabEndTimer = 0;
   endXfGrab();
   crossfader.pos = pos;
   renderCrossfaderReadout();
-  applyCrossfade();
+  applyCrossfade({ force: true });
 }
 
 el.jumpA.addEventListener("click", () => jumpTo(0));
@@ -1683,12 +1711,14 @@ function pauseClockSlideManual() {
 }
 
 function setCrossfaderPos(pos) {
+  clearTimeout(xfGrabEndTimer);
+  xfGrabEndTimer = 0;
   endXfGrab();
   clockSlideDriving = true;
   crossfader.pos = clamp(pos, 0, 1);
   el.crossfader.value = String(Math.round(crossfader.pos * 1000));
   renderCrossfaderReadout();
-  applyCrossfade();
+  applyCrossfade({ force: true });
   clockSlideDriving = false;
 }
 
@@ -2284,6 +2314,7 @@ function midiApplyAbsolute(pos) {
     midiGestureActive = true;
     el.crossfader.value = String(Math.round(crossfader.pos * 1000));
     renderCrossfaderReadout();
+    applyCrossfade();
   } else {
     crossfader.pos = pos;
     midiCommitPos();
