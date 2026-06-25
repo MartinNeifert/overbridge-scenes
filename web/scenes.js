@@ -641,12 +641,7 @@ function scheduleEndXfGrab() {
   }, 0);
 }
 
-function onQuadGrabEnd() {
-  if (!isQuadMode()) {
-    scheduleEndXfGrab();
-    return;
-  }
-
+function applyQuadReleaseSnap() {
   const snap = crossfader.quadReleaseSnap ?? DEFAULT_QUAD_RELEASE_SNAP;
   const target = quadSnapPosition(snap);
   if (!target) {
@@ -687,12 +682,7 @@ function onQuadGrabEnd() {
   );
 }
 
-function onAbGrabEnd() {
-  if (isQuadMode()) {
-    scheduleEndXfGrab();
-    return;
-  }
-
+function applyAbReleaseSnap() {
   const snap = crossfader.abReleaseSnap ?? DEFAULT_AB_RELEASE_SNAP;
   const target = abSnapPosition(snap);
   if (target == null) {
@@ -725,6 +715,22 @@ function onAbGrabEnd() {
       save();
     }
   );
+}
+
+function onQuadGrabEnd() {
+  if (!isQuadMode()) {
+    scheduleEndXfGrab();
+    return;
+  }
+  applyQuadReleaseSnap();
+}
+
+function onAbGrabEnd() {
+  if (isQuadMode()) {
+    scheduleEndXfGrab();
+    return;
+  }
+  applyAbReleaseSnap();
 }
 
 function applyCrossfade(opts = {}) {
@@ -1749,9 +1755,10 @@ function beginClockSlideOneShotRun() {
 
 function finishClockSlideOneShot() {
   const cycle = clockSlideCycleTicks();
+  const handoffToContinuous = clockSlideCfg.enabled;
   cancelClockSlideOneShot();
   setCrossfaderPos(1);
-  if (clockSlideCfg.enabled) {
+  if (handoffToContinuous) {
     clockState.running = true;
     clockState.pausedByUser = false;
     clockState.awaitingSync = false;
@@ -1762,6 +1769,8 @@ function finishClockSlideOneShot() {
     clockState.running = false;
     clockState.awaitingSync = true;
     clockState.syncMode = "need_start";
+    // One-shot ends without a pointer release — honor release-snap settings.
+    if (!isQuadMode()) applyAbReleaseSnap();
   }
   renderClockSlideStatus();
 }
