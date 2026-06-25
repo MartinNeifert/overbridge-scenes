@@ -88,6 +88,24 @@
         <input type="range" id="sc-crossfader" min="0" max="1000" step="1" value="0" aria-label="Crossfader" />
         <span class="sc-xf-name sc-xf-name-b" id="sc-xf-name-b" title="Scene B">Baseline</span>
       </div>
+
+      <details class="sc-xf-ab-options-panel" id="sc-ab-options-panel">
+        <summary class="sc-xf-ab-options-summary">
+          <span>Crossfader behavior</span>
+          <span class="sc-hint sc-xf-ab-options-meta" id="sc-ab-options-meta"></span>
+        </summary>
+        <div class="sc-xf-ab-options-body">
+          <label class="sc-xf-ab-opt" title="Where the slider moves after you release it">
+            <span class="sc-picker-label">On release</span>
+            <select id="sc-ab-release-snap" aria-label="Crossfader release behavior">
+              <option value="none">Stay</option>
+              <option value="center" selected>Return to center</option>
+              <option value="a">Snap to A</option>
+              <option value="b">Snap to B</option>
+            </select>
+          </label>
+        </div>
+      </details>
     </div>
 
     <div class="sc-xf-quad hidden" id="sc-xf-quad">

@@ -264,7 +264,8 @@ body {
 
 .sc-assign-corner select { width: 100%; }
 
-.sc-xf-quad-options-panel {
+.sc-xf-quad-options-panel,
+.sc-xf-ab-options-panel {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--bg) 55%, var(--surface));
@@ -272,7 +273,8 @@ body {
   margin-bottom: 0.85rem;
 }
 
-.sc-xf-quad-options-summary {
+.sc-xf-quad-options-summary,
+.sc-xf-ab-options-summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -285,34 +287,40 @@ body {
   list-style: none;
 }
 
-.sc-xf-quad-options-panel[open] > .sc-xf-quad-options-summary {
+.sc-xf-quad-options-panel[open] > .sc-xf-quad-options-summary,
+.sc-xf-ab-options-panel[open] > .sc-xf-ab-options-summary {
   border-bottom: 1px solid var(--border);
 }
 
-.sc-xf-quad-options-summary::-webkit-details-marker {
+.sc-xf-quad-options-summary::-webkit-details-marker,
+.sc-xf-ab-options-summary::-webkit-details-marker {
   display: none;
 }
 
-.sc-xf-quad-options-meta {
+.sc-xf-quad-options-meta,
+.sc-xf-ab-options-meta {
   font-weight: 400;
   font-size: 0.72rem;
 }
 
-.sc-xf-quad-options-body {
+.sc-xf-quad-options-body,
+.sc-xf-ab-options-body {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem 1.25rem;
   padding: 0.75rem;
 }
 
-.sc-xf-quad-opt {
+.sc-xf-quad-opt,
+.sc-xf-ab-opt {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
   min-width: 9rem;
 }
 
-.sc-xf-quad-opt select { min-width: 10rem; }
+.sc-xf-quad-opt select,
+.sc-xf-ab-opt select { min-width: 10rem; }
 
 .sc-xf-pad-wrap {
   display: flex;

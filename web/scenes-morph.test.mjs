@@ -7,6 +7,7 @@ import {
   bilinearWeightsAssigned,
   isQuadCenter,
   quadSnapPosition,
+  abSnapPosition,
   computeCrossfadeUpdates,
   computeMorphValue,
   computeQuadUpdates,
@@ -355,6 +356,13 @@ describe("quad crossfader morph", () => {
     assert.deepEqual(quadSnapPosition("center"), { x: 0.5, y: 0.5 });
     assert.deepEqual(quadSnapPosition("tl"), { x: 0, y: 0 });
     assert.equal(quadSnapPosition("none"), null);
+  });
+
+  it("abSnapPosition maps release targets", () => {
+    assert.equal(abSnapPosition("center"), 0.5);
+    assert.equal(abSnapPosition("a"), 0);
+    assert.equal(abSnapPosition("b"), 1);
+    assert.equal(abSnapPosition("none"), null);
   });
 });
 

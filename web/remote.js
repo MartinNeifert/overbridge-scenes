@@ -6,11 +6,13 @@ import {
   computeCrossfadeUpdates,
   DEFAULT_QUAD_CORNERS,
   DEFAULT_QUAD_RELEASE_SNAP,
+  DEFAULT_AB_RELEASE_SNAP,
   DEFAULT_QUAD_RELEASE_SNAP_MS,
   normalizeCrossfader,
   quadSnapPosition,
+  abSnapPosition,
 } from "./scenes-morph.mjs";
-import { bindXfPad, updatePadHandle, animatePadPosition } from "./scenes-xf-pad.mjs";
+import { bindXfPad, updatePadHandle, animatePadPosition, animateScalar } from "./scenes-xf-pad.mjs";
 
 const EPS = 1e-4;
 
@@ -33,6 +35,7 @@ const pendingApply = new Map();
 let flushScheduled = false;
 let xfGrab = null;
 let quadSnapCancel = null;
+let abSnapCancel = null;
 
 const el = {
   ab: document.getElementById("remote-ab"),
@@ -74,7 +77,8 @@ function freshCrossfader() {
     y: 0.5,
     quadCenterMode: "interpolation",
     quadReleaseSnap: DEFAULT_QUAD_RELEASE_SNAP,
-    quadReleaseSnapMs: DEFAULT_QUAD_RELEASE_SNAP_MS,
+    abReleaseSnap: DEFAULT_AB_RELEASE_SNAP,
+    releaseSnapMs: DEFAULT_QUAD_RELEASE_SNAP_MS,
   };
 }
 
@@ -173,7 +177,8 @@ function applyScenesPayload(data) {
     crossfader.y = normalized.y;
     crossfader.quadCenterMode = normalized.quadCenterMode;
     crossfader.quadReleaseSnap = normalized.quadReleaseSnap;
-    crossfader.quadReleaseSnapMs = normalized.quadReleaseSnapMs;
+    crossfader.abReleaseSnap = normalized.abReleaseSnap;
+    crossfader.releaseSnapMs = normalized.releaseSnapMs;
   }
   if (data.baseline) {
     if (Array.isArray(data.baseline)) {
@@ -244,6 +249,13 @@ function beginXfGrab() {
   xfGrab = null;
 }
 
+function cancelAbSnap() {
+  if (abSnapCancel) {
+    abSnapCancel();
+    abSnapCancel = null;
+  }
+}
+
 function cancelQuadSnap() {
   if (quadSnapCancel) {
     quadSnapCancel();
@@ -256,24 +268,30 @@ function endXfGrab() {
 }
 
 function onQuadGrabEnd() {
-  endXfGrab();
-  if (!isQuadMode()) return;
+  if (!isQuadMode()) {
+    endXfGrab();
+    return;
+  }
 
   const snap = crossfader.quadReleaseSnap ?? DEFAULT_QUAD_RELEASE_SNAP;
   const target = quadSnapPosition(snap);
-  if (!target) return;
+  if (!target) {
+    endXfGrab();
+    return;
+  }
 
   if (
     Math.abs(crossfader.x - target.x) < EPS &&
     Math.abs(crossfader.y - target.y) < EPS
   ) {
+    endXfGrab();
     return;
   }
 
   cancelQuadSnap();
   const fromX = crossfader.x;
   const fromY = crossfader.y;
-  const durationMs = crossfader.quadReleaseSnapMs ?? DEFAULT_QUAD_RELEASE_SNAP_MS;
+  const durationMs = crossfader.releaseSnapMs ?? DEFAULT_QUAD_RELEASE_SNAP_MS;
 
   quadSnapCancel = animatePadPosition(
     fromX,
@@ -289,6 +307,46 @@ function onQuadGrabEnd() {
     },
     () => {
       quadSnapCancel = null;
+      endXfGrab();
+    }
+  );
+}
+
+function onAbGrabEnd() {
+  if (isQuadMode()) {
+    endXfGrab();
+    return;
+  }
+
+  const snap = crossfader.abReleaseSnap ?? DEFAULT_AB_RELEASE_SNAP;
+  const target = abSnapPosition(snap);
+  if (target == null) {
+    endXfGrab();
+    return;
+  }
+
+  if (Math.abs(crossfader.pos - target) < EPS) {
+    endXfGrab();
+    return;
+  }
+
+  cancelAbSnap();
+  const from = crossfader.pos;
+  const durationMs = crossfader.releaseSnapMs ?? DEFAULT_QUAD_RELEASE_SNAP_MS;
+
+  abSnapCancel = animateScalar(
+    from,
+    target,
+    durationMs,
+    (pos) => {
+      crossfader.pos = pos;
+      el.slider.value = String(Math.round(pos * 1000));
+      renderReadout();
+      applyCrossfade();
+    },
+    () => {
+      abSnapCancel = null;
+      endXfGrab();
     }
   );
 }
@@ -452,6 +510,7 @@ function connectWs() {
 }
 
 function jumpTo(pos) {
+  cancelAbSnap();
   endXfGrab();
   crossfader.pos = pos;
   renderReadout();
@@ -463,9 +522,12 @@ function setQuadPos(x, y) {
   crossfader.y = clamp(y, 0, 1);
 }
 
-el.slider?.addEventListener("pointerdown", beginXfGrab);
-el.slider?.addEventListener("pointerup", endXfGrab);
-el.slider?.addEventListener("pointercancel", endXfGrab);
+el.slider?.addEventListener("pointerdown", () => {
+  cancelAbSnap();
+  beginXfGrab();
+});
+el.slider?.addEventListener("pointerup", onAbGrabEnd);
+el.slider?.addEventListener("pointercancel", onAbGrabEnd);
 
 el.slider?.addEventListener("input", () => {
   if (!xfGrab) beginXfGrab();

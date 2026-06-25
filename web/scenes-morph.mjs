@@ -17,9 +17,12 @@ export const DEFAULT_QUAD_CORNERS = { tl: "1", tr: "2", bl: "3", br: "4" };
 export const QUAD_CENTER_MODES = ["interpolation", "baseline"];
 /** Where the pad handle moves after pointer release (`none` = stay put). */
 export const QUAD_RELEASE_SNAPS = ["none", "center", "tl", "tr", "bl", "br"];
+/** Where the A/B slider moves after pointer release. */
+export const AB_RELEASE_SNAPS = ["none", "center", "a", "b"];
 
 export const DEFAULT_QUAD_CENTER_MODE = "interpolation";
 export const DEFAULT_QUAD_RELEASE_SNAP = "center";
+export const DEFAULT_AB_RELEASE_SNAP = "center";
 export const DEFAULT_QUAD_RELEASE_SNAP_MS = 400;
 
 export function clamp(v, lo, hi) {
@@ -43,10 +46,16 @@ export function normalizeQuadReleaseSnap(snap) {
   return QUAD_RELEASE_SNAPS.includes(snap) ? snap : DEFAULT_QUAD_RELEASE_SNAP;
 }
 
+export function normalizeAbReleaseSnap(snap) {
+  return AB_RELEASE_SNAPS.includes(snap) ? snap : DEFAULT_AB_RELEASE_SNAP;
+}
+
 export function normalizeCrossfader(crossfader = {}) {
   const mode = crossfaderMode(crossfader);
   const corners = { ...DEFAULT_QUAD_CORNERS, ...(crossfader.corners || {}) };
-  const snapMs = Number(crossfader.quadReleaseSnapMs);
+  const snapMs = Number(crossfader.releaseSnapMs ?? crossfader.quadReleaseSnapMs);
+  const releaseSnapMs =
+    Number.isFinite(snapMs) && snapMs >= 0 ? snapMs : DEFAULT_QUAD_RELEASE_SNAP_MS;
   return {
     mode,
     a: crossfader.a ?? null,
@@ -57,7 +66,9 @@ export function normalizeCrossfader(crossfader = {}) {
     y: Number.isFinite(crossfader.y) ? crossfader.y : 0.5,
     quadCenterMode: normalizeQuadCenterMode(crossfader.quadCenterMode),
     quadReleaseSnap: normalizeQuadReleaseSnap(crossfader.quadReleaseSnap),
-    quadReleaseSnapMs: Number.isFinite(snapMs) && snapMs >= 0 ? snapMs : DEFAULT_QUAD_RELEASE_SNAP_MS,
+    abReleaseSnap: normalizeAbReleaseSnap(crossfader.abReleaseSnap),
+    releaseSnapMs,
+    quadReleaseSnapMs: releaseSnapMs,
   };
 }
 
@@ -124,6 +135,20 @@ export function quadSnapPosition(target) {
       return { x: 1, y: 1 };
     case "center":
       return { x: 0.5, y: 0.5 };
+    default:
+      return null;
+  }
+}
+
+/** A/B slider position for a release-snap target. */
+export function abSnapPosition(target) {
+  switch (target) {
+    case "a":
+      return 0;
+    case "b":
+      return 1;
+    case "center":
+      return 0.5;
     default:
       return null;
   }

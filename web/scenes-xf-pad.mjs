@@ -106,3 +106,26 @@ export function animatePadPosition(fromX, fromY, toX, toY, durationMs, onFrame, 
     cancelled = true;
   };
 }
+
+/**
+ * Ease-out cubic animation for a scalar value (e.g. A/B crossfader position).
+ * @returns {() => void} cancel
+ */
+export function animateScalar(from, to, durationMs, onFrame, onDone) {
+  let cancelled = false;
+  const t0 = performance.now();
+
+  function frame(now) {
+    if (cancelled) return;
+    const t = durationMs <= 0 ? 1 : clamp((now - t0) / durationMs, 0, 1);
+    const eased = 1 - (1 - t) ** 3;
+    onFrame(from + (to - from) * eased);
+    if (t < 1) requestAnimationFrame(frame);
+    else onDone?.();
+  }
+
+  requestAnimationFrame(frame);
+  return () => {
+    cancelled = true;
+  };
+}
