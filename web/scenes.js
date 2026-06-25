@@ -118,6 +118,8 @@ const el = {
   quadCenterMode: document.getElementById("sc-quad-center-mode"),
   quadReleaseSnap: document.getElementById("sc-quad-release-snap"),
   abReleaseSnap: document.getElementById("sc-ab-release-snap"),
+  abOptionsPanel: document.getElementById("sc-ab-options-panel"),
+  quadOptionsPanel: document.getElementById("sc-quad-options-panel"),
   quadOptionsMeta: document.getElementById("sc-quad-options-meta"),
   abOptionsMeta: document.getElementById("sc-ab-options-meta"),
   jumpA: document.getElementById("sc-jump-a"),
@@ -964,6 +966,8 @@ function renderCrossfaderLayout() {
   el.xfAb?.classList.toggle("hidden", quad);
   el.xfQuad?.classList.toggle("hidden", !quad);
   el.xfAbFooter?.classList.toggle("hidden", quad);
+  el.abOptionsPanel?.classList.toggle("hidden", quad);
+  el.quadOptionsPanel?.classList.toggle("hidden", !quad);
 }
 
 function renderQuadPadLabels() {

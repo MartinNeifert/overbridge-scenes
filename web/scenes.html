@@ -88,24 +88,6 @@
         <input type="range" id="sc-crossfader" min="0" max="1000" step="1" value="0" aria-label="Crossfader" />
         <span class="sc-xf-name sc-xf-name-b" id="sc-xf-name-b" title="Scene B">Baseline</span>
       </div>
-
-      <details class="sc-xf-ab-options-panel" id="sc-ab-options-panel">
-        <summary class="sc-xf-ab-options-summary">
-          <span>Crossfader behavior</span>
-          <span class="sc-hint sc-xf-ab-options-meta" id="sc-ab-options-meta"></span>
-        </summary>
-        <div class="sc-xf-ab-options-body">
-          <label class="sc-xf-ab-opt" title="Where the slider moves after you release it">
-            <span class="sc-picker-label">On release</span>
-            <select id="sc-ab-release-snap" aria-label="Crossfader release behavior">
-              <option value="none">Stay</option>
-              <option value="center" selected>Return to center</option>
-              <option value="a">Snap to A</option>
-              <option value="b">Snap to B</option>
-            </select>
-          </label>
-        </div>
-      </details>
     </div>
 
     <div class="sc-xf-quad hidden" id="sc-xf-quad">
@@ -127,33 +109,6 @@
           <select id="sc-assign-br" aria-label="Assign bottom-right scene"></select>
         </label>
       </div>
-
-      <details class="sc-xf-quad-options-panel" id="sc-quad-options-panel">
-        <summary class="sc-xf-quad-options-summary">
-          <span>Grid behavior</span>
-          <span class="sc-hint sc-xf-quad-options-meta" id="sc-quad-options-meta"></span>
-        </summary>
-        <div class="sc-xf-quad-options-body">
-          <label class="sc-xf-quad-opt" title="What the grid center morphs toward">
-            <span class="sc-picker-label">Center</span>
-            <select id="sc-quad-center-mode" aria-label="Grid center behavior">
-              <option value="interpolation">Scene blend</option>
-              <option value="baseline">Baseline</option>
-            </select>
-          </label>
-          <label class="sc-xf-quad-opt" title="Where the handle moves after you release the pad">
-            <span class="sc-picker-label">On release</span>
-            <select id="sc-quad-release-snap" aria-label="Pad release behavior">
-              <option value="none">Stay</option>
-              <option value="center" selected>Return to center</option>
-              <option value="tl">Snap to top left</option>
-              <option value="tr">Snap to top right</option>
-              <option value="bl">Snap to bottom left</option>
-              <option value="br">Snap to bottom right</option>
-            </select>
-          </label>
-        </div>
-      </details>
 
       <div class="sc-xf-pad-wrap">
         <div class="sc-xf-pad" id="sc-xf-pad" aria-label="2D crossfader grid">
@@ -213,6 +168,51 @@
         <input type="search" id="sc-param-search" placeholder="Search parameters to map (e.g. Filter Cutoff)…" autocomplete="off" />
       </div>
       <div id="sc-param-results" class="sc-param-results"></div>
+    </div>
+  </details>
+
+  <details class="sc-xf-ab-options-panel" id="sc-ab-options-panel">
+    <summary class="sc-xf-ab-options-summary">
+      <span>Crossfader behavior</span>
+      <span class="sc-hint sc-xf-ab-options-meta" id="sc-ab-options-meta"></span>
+    </summary>
+    <div class="sc-xf-ab-options-body">
+      <label class="sc-xf-ab-opt" title="Where the slider moves after you release it">
+        <span class="sc-picker-label">On release</span>
+        <select id="sc-ab-release-snap" aria-label="Crossfader release behavior">
+          <option value="none" selected>Stay</option>
+          <option value="center">Return to center</option>
+          <option value="a">Snap to A</option>
+          <option value="b">Snap to B</option>
+        </select>
+      </label>
+    </div>
+  </details>
+
+  <details class="sc-xf-quad-options-panel hidden" id="sc-quad-options-panel">
+    <summary class="sc-xf-quad-options-summary">
+      <span>Grid behavior</span>
+      <span class="sc-hint sc-xf-quad-options-meta" id="sc-quad-options-meta"></span>
+    </summary>
+    <div class="sc-xf-quad-options-body">
+      <label class="sc-xf-quad-opt" title="What the grid center morphs toward">
+        <span class="sc-picker-label">Center</span>
+        <select id="sc-quad-center-mode" aria-label="Grid center behavior">
+          <option value="interpolation">Scene blend</option>
+          <option value="baseline">Baseline</option>
+        </select>
+      </label>
+      <label class="sc-xf-quad-opt" title="Where the handle moves after you release the pad">
+        <span class="sc-picker-label">On release</span>
+        <select id="sc-quad-release-snap" aria-label="Pad release behavior">
+          <option value="none">Stay</option>
+          <option value="center" selected>Return to center</option>
+          <option value="tl">Snap to top left</option>
+          <option value="tr">Snap to top right</option>
+          <option value="bl">Snap to bottom left</option>
+          <option value="br">Snap to bottom right</option>
+        </select>
+      </label>
     </div>
   </details>
 

@@ -22,7 +22,7 @@ export const AB_RELEASE_SNAPS = ["none", "center", "a", "b"];
 
 export const DEFAULT_QUAD_CENTER_MODE = "interpolation";
 export const DEFAULT_QUAD_RELEASE_SNAP = "center";
-export const DEFAULT_AB_RELEASE_SNAP = "center";
+export const DEFAULT_AB_RELEASE_SNAP = "none";
 export const DEFAULT_QUAD_RELEASE_SNAP_MS = 400;
 
 export function clamp(v, lo, hi) {

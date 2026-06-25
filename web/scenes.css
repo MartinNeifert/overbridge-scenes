@@ -264,39 +264,6 @@ body {
 
 .sc-assign-corner select { width: 100%; }
 
-.sc-xf-quad-options-panel,
-.sc-xf-ab-options-panel {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--bg) 55%, var(--surface));
-  overflow: hidden;
-  margin-bottom: 0.85rem;
-}
-
-.sc-xf-quad-options-summary,
-.sc-xf-ab-options-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.55rem 0.75rem;
-  cursor: pointer;
-  font-size: 0.8rem;
-  font-weight: 600;
-  user-select: none;
-  list-style: none;
-}
-
-.sc-xf-quad-options-panel[open] > .sc-xf-quad-options-summary,
-.sc-xf-ab-options-panel[open] > .sc-xf-ab-options-summary {
-  border-bottom: 1px solid var(--border);
-}
-
-.sc-xf-quad-options-summary::-webkit-details-marker,
-.sc-xf-ab-options-summary::-webkit-details-marker {
-  display: none;
-}
-
 .sc-xf-quad-options-meta,
 .sc-xf-ab-options-meta {
   font-weight: 400;
@@ -444,7 +411,9 @@ body {
 .sc-scenes-panel,
 .sc-picker-panel,
 .sc-midi-config-panel,
-.sc-midi-log {
+.sc-midi-log,
+.sc-xf-ab-options-panel,
+.sc-xf-quad-options-panel {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
@@ -454,7 +423,9 @@ body {
 .sc-scenes-summary,
 .sc-picker-summary,
 .sc-midi-config-summary,
-.sc-midi-log-summary {
+.sc-midi-log-summary,
+.sc-xf-ab-options-summary,
+.sc-xf-quad-options-summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -470,14 +441,18 @@ body {
 .sc-scenes-panel[open] > .sc-scenes-summary,
 .sc-picker-panel[open] > .sc-picker-summary,
 .sc-midi-config-panel[open] > .sc-midi-config-summary,
-.sc-midi-log[open] > .sc-midi-log-summary {
+.sc-midi-log[open] > .sc-midi-log-summary,
+.sc-xf-ab-options-panel[open] > .sc-xf-ab-options-summary,
+.sc-xf-quad-options-panel[open] > .sc-xf-quad-options-summary {
   border-bottom: 1px solid var(--border);
 }
 
 .sc-scenes-summary::-webkit-details-marker,
 .sc-picker-summary::-webkit-details-marker,
 .sc-midi-config-summary::-webkit-details-marker,
-.sc-midi-log-summary::-webkit-details-marker {
+.sc-midi-log-summary::-webkit-details-marker,
+.sc-xf-ab-options-summary::-webkit-details-marker,
+.sc-xf-quad-options-summary::-webkit-details-marker {
   display: none;
 }
 
