@@ -1,7 +1,19 @@
-// Mobile crossfader — read-only scenes client (slider only).
-// Uses the same morph engine as scenes.html; does not edit scenes.
+// Mobile crossfader — read-only scenes client.
+// Uses the shared morph engine from scenes-morph.mjs.
+
+import {
+  clamp,
+  computeCrossfadeUpdates,
+  DEFAULT_QUAD_CORNERS,
+  DEFAULT_QUAD_RELEASE_SNAP,
+  DEFAULT_QUAD_RELEASE_SNAP_MS,
+  normalizeCrossfader,
+  quadSnapPosition,
+} from "./scenes-morph.mjs";
+import { bindXfPad, updatePadHandle, animatePadPosition } from "./scenes-xf-pad.mjs";
 
 const EPS = 1e-4;
+
 const SCENE_SLOTS = 4;
 
 let plugin = null;
@@ -10,7 +22,7 @@ let liveParams = [];
 const liveByIndex = new Map();
 
 let scenes = freshScenes();
-let crossfader = { a: null, b: null, pos: 0 };
+let crossfader = freshCrossfader();
 let baseline = new Map();
 let storedBaseline = null;
 let baselineResolved = false;
@@ -20,10 +32,14 @@ let ws = null;
 const pendingApply = new Map();
 let flushScheduled = false;
 let xfGrab = null;
+let quadSnapCancel = null;
 
 const el = {
+  ab: document.getElementById("remote-ab"),
+  quad: document.getElementById("remote-quad"),
   slider: document.getElementById("remote-slider"),
   readout: document.getElementById("remote-readout"),
+  quadReadout: document.getElementById("remote-quad-readout"),
   meta: document.getElementById("remote-meta"),
   status: document.getElementById("remote-status"),
   nameA: document.getElementById("remote-name-a"),
@@ -31,10 +47,39 @@ const el = {
   jumpA: document.getElementById("remote-jump-a"),
   jumpCenter: document.getElementById("remote-jump-center"),
   jumpB: document.getElementById("remote-jump-b"),
+  pad: document.getElementById("remote-pad"),
+  padHandle: document.getElementById("remote-pad-handle"),
+  padLabelTl: document.getElementById("remote-pad-label-tl"),
+  padLabelTr: document.getElementById("remote-pad-label-tr"),
+  padLabelBl: document.getElementById("remote-pad-label-bl"),
+  padLabelBr: document.getElementById("remote-pad-label-br"),
 };
 
-function clamp(v, lo, hi) {
-  return Math.min(hi, Math.max(lo, v));
+function freshScenes() {
+  return Array.from({ length: SCENE_SLOTS }, (_, i) => ({
+    id: String(i + 1),
+    name: `Scene ${i + 1}`,
+    params: [],
+  }));
+}
+
+function freshCrossfader() {
+  return {
+    mode: "ab",
+    a: null,
+    b: null,
+    pos: 0,
+    corners: { ...DEFAULT_QUAD_CORNERS },
+    x: 0.5,
+    y: 0.5,
+    quadCenterMode: "interpolation",
+    quadReleaseSnap: DEFAULT_QUAD_RELEASE_SNAP,
+    quadReleaseSnapMs: DEFAULT_QUAD_RELEASE_SNAP_MS,
+  };
+}
+
+function isQuadMode() {
+  return crossfader.mode === "quad";
 }
 
 function bankLetter(b) {
@@ -54,16 +99,13 @@ function parsePatternKey(key) {
   return { bank, num };
 }
 
-function freshScenes() {
-  return Array.from({ length: SCENE_SLOTS }, (_, i) => ({
-    id: String(i + 1),
-    name: `Scene ${i + 1}`,
-    params: [],
-  }));
-}
-
 function sceneById(id) {
   return scenes.find((s) => s.id === id) || null;
+}
+
+function cornerSceneName(corner) {
+  const scene = sceneById(crossfader.corners[corner]);
+  return scene ? scene.name : "Baseline";
 }
 
 function liveValue(index) {
@@ -71,10 +113,26 @@ function liveValue(index) {
   return p ? p.value : undefined;
 }
 
-function paramRange(index) {
-  const p = liveByIndex.get(index);
-  if (p && Number.isFinite(p.min) && Number.isFinite(p.max)) return [p.min, p.max];
-  return [0, 1];
+function liveValuesMap() {
+  const m = new Map();
+  for (const p of liveParams) m.set(p.index, p.value);
+  return m;
+}
+
+function paramRangesMap() {
+  const m = new Map();
+  for (const p of liveParams) m.set(p.index, { min: p.min, max: p.max });
+  return m;
+}
+
+function morphCtx() {
+  return {
+    baselineExplicit,
+    baseline,
+    liveValues: liveValuesMap(),
+    paramRanges: paramRangesMap(),
+    xfGrab,
+  };
 }
 
 function scenesApiUrl(pat) {
@@ -106,8 +164,16 @@ function applyScenesPayload(data) {
     }
   }
   if (data.crossfader) {
-    crossfader.a = data.crossfader.a ?? null;
-    crossfader.b = data.crossfader.b ?? null;
+    const normalized = normalizeCrossfader(data.crossfader);
+    crossfader.mode = normalized.mode;
+    crossfader.a = normalized.a;
+    crossfader.b = normalized.b;
+    crossfader.corners = { ...normalized.corners };
+    crossfader.x = normalized.x;
+    crossfader.y = normalized.y;
+    crossfader.quadCenterMode = normalized.quadCenterMode;
+    crossfader.quadReleaseSnap = normalized.quadReleaseSnap;
+    crossfader.quadReleaseSnapMs = normalized.quadReleaseSnapMs;
   }
   if (data.baseline) {
     if (Array.isArray(data.baseline)) {
@@ -174,46 +240,57 @@ function resolveBaseline() {
   }
 }
 
-function unionIndices() {
-  const a = sceneById(crossfader.a);
-  const b = sceneById(crossfader.b);
-  const set = new Set();
-  if (a) for (const p of a.params) set.add(p.index);
-  if (b) for (const p of b.params) set.add(p.index);
-  return [...set];
-}
-
-function emptySideValue(index) {
-  if (baselineExplicit && baseline.has(index)) return baseline.get(index);
-  if (xfGrab && xfGrab.per.has(index)) return xfGrab.per.get(index).v0;
-  const lv = liveValue(index);
-  if (lv !== undefined) return lv;
-  if (baseline.has(index)) return baseline.get(index);
-  return 0;
-}
-
-function endpointValue(scene, index) {
-  if (scene) {
-    const p = scene.params.find((x) => x.index === index);
-    if (p) return p.value;
-  }
-  return emptySideValue(index);
-}
-
 function beginXfGrab() {
-  const per = new Map();
-  for (const index of unionIndices()) {
-    const lv = liveValue(index);
-    per.set(index, {
-      v0: lv !== undefined ? lv : emptySideValue(index),
-      engaged: false,
-    });
+  xfGrab = null;
+}
+
+function cancelQuadSnap() {
+  if (quadSnapCancel) {
+    quadSnapCancel();
+    quadSnapCancel = null;
   }
-  xfGrab = { t0: crossfader.pos, per };
 }
 
 function endXfGrab() {
   xfGrab = null;
+}
+
+function onQuadGrabEnd() {
+  endXfGrab();
+  if (!isQuadMode()) return;
+
+  const snap = crossfader.quadReleaseSnap ?? DEFAULT_QUAD_RELEASE_SNAP;
+  const target = quadSnapPosition(snap);
+  if (!target) return;
+
+  if (
+    Math.abs(crossfader.x - target.x) < EPS &&
+    Math.abs(crossfader.y - target.y) < EPS
+  ) {
+    return;
+  }
+
+  cancelQuadSnap();
+  const fromX = crossfader.x;
+  const fromY = crossfader.y;
+  const durationMs = crossfader.quadReleaseSnapMs ?? DEFAULT_QUAD_RELEASE_SNAP_MS;
+
+  quadSnapCancel = animatePadPosition(
+    fromX,
+    fromY,
+    target.x,
+    target.y,
+    durationMs,
+    (x, y) => {
+      setQuadPos(x, y);
+      updatePadHandle(el.pad, el.padHandle, x, y);
+      renderReadout();
+      applyCrossfade();
+    },
+    () => {
+      quadSnapCancel = null;
+    }
+  );
 }
 
 function queueApply(index, value) {
@@ -242,22 +319,38 @@ function flushApply() {
 }
 
 function applyCrossfade() {
-  const a = sceneById(crossfader.a);
-  const b = sceneById(crossfader.b);
-  if (!a && !b) return;
-  const t = crossfader.pos;
-
-  for (const index of unionIndices()) {
-    const av = endpointValue(a, index);
-    const bv = endpointValue(b, index);
-    const ideal = av + (bv - av) * t;
-    const [min, max] = paramRange(index);
-    queueApply(index, clamp(ideal, Math.min(min, max), Math.max(min, max)));
+  const updates = computeCrossfadeUpdates(crossfader, scenes, morphCtx(), "jump");
+  for (const { index, value } of updates) {
+    queueApply(index, value);
   }
   flushSoon();
 }
 
+function renderLayout() {
+  const quad = isQuadMode();
+  el.ab?.classList.toggle("hidden", quad);
+  el.quad?.classList.toggle("hidden", !quad);
+}
+
+function renderQuadPadLabels() {
+  if (!el.padLabelTl) return;
+  el.padLabelTl.textContent = cornerSceneName("tl");
+  el.padLabelTr.textContent = cornerSceneName("tr");
+  el.padLabelBl.textContent = cornerSceneName("bl");
+  el.padLabelBr.textContent = cornerSceneName("br");
+}
+
 function renderReadout() {
+  renderLayout();
+  if (isQuadMode()) {
+    const xPct = Math.round(crossfader.x * 100);
+    const yPct = Math.round(crossfader.y * 100);
+    if (el.quadReadout) el.quadReadout.textContent = `${xPct}% · ${yPct}%`;
+    renderQuadPadLabels();
+    updatePadHandle(el.pad, el.padHandle, crossfader.x, crossfader.y);
+    return;
+  }
+
   const pct = Math.round(crossfader.pos * 100);
   const a = sceneById(crossfader.a);
   const b = sceneById(crossfader.b);
@@ -284,7 +377,7 @@ async function loadScenesForPattern(patKey) {
   if (parsed) pattern = parsed;
 
   scenes = freshScenes();
-  crossfader = { a: null, b: null, pos: 0 };
+  crossfader = freshCrossfader();
   baseline = new Map();
   storedBaseline = null;
   baselineResolved = false;
@@ -365,20 +458,39 @@ function jumpTo(pos) {
   applyCrossfade();
 }
 
-el.slider.addEventListener("pointerdown", beginXfGrab);
-el.slider.addEventListener("pointerup", endXfGrab);
-el.slider.addEventListener("pointercancel", endXfGrab);
+function setQuadPos(x, y) {
+  crossfader.x = clamp(x, 0, 1);
+  crossfader.y = clamp(y, 0, 1);
+}
 
-el.slider.addEventListener("input", () => {
+el.slider?.addEventListener("pointerdown", beginXfGrab);
+el.slider?.addEventListener("pointerup", endXfGrab);
+el.slider?.addEventListener("pointercancel", endXfGrab);
+
+el.slider?.addEventListener("input", () => {
   if (!xfGrab) beginXfGrab();
   crossfader.pos = Number(el.slider.value) / 1000;
   renderReadout();
   applyCrossfade();
 });
 
-el.jumpA.addEventListener("click", () => jumpTo(0));
-el.jumpCenter.addEventListener("click", () => jumpTo(0.5));
-el.jumpB.addEventListener("click", () => jumpTo(1));
+el.jumpA?.addEventListener("click", () => jumpTo(0));
+el.jumpCenter?.addEventListener("click", () => jumpTo(0.5));
+el.jumpB?.addEventListener("click", () => jumpTo(1));
+
+bindXfPad(el.pad, el.padHandle, {
+  getPos: () => ({ x: crossfader.x, y: crossfader.y }),
+  setPos: (x, y) => setQuadPos(x, y),
+  onGrabStart: () => {
+    cancelQuadSnap();
+    beginXfGrab();
+  },
+  onGrabEnd: onQuadGrabEnd,
+  onChange: () => {
+    renderReadout();
+    applyCrossfade();
+  },
+});
 
 (async () => {
   try {
@@ -390,7 +502,8 @@ el.jumpB.addEventListener("click", () => jumpTo(1));
 
     const patKey = await resolvePatternKey();
     await loadScenesForPattern(patKey);
-    setMeta([status.plugin || "Host", patternKey()]);
+    const modeLabel = isQuadMode() ? "4-scene grid" : "A/B";
+    setMeta([status.plugin || "Host", patternKey(), modeLabel]);
     if (
       status.lan_ip &&
       (location.hostname === "localhost" || location.hostname === "127.0.0.1")
