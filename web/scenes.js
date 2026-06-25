@@ -24,6 +24,12 @@ import {
   abSnapPosition,
   crossfaderHasAssignments,
 } from "./scenes-morph.mjs";
+import {
+  CUSTOM_CURVES_KEY,
+  DEFAULT_CURVE_ID,
+  applySweepCurve,
+  listCurveOptions,
+} from "./sweep-curves.mjs";
 import { bindXfPad, updatePadHandle, animatePadPosition, animateScalar } from "./scenes-xf-pad.mjs";
 
 const STORE_PREFIX = "ob-scenes:v1:";
@@ -129,6 +135,7 @@ const el = {
   clockSlide: document.getElementById("sc-clock-slide"),
   clockBars: document.getElementById("sc-clock-bars"),
   clockSlideOnce: document.getElementById("sc-clock-slide-once"),
+  clockCurve: document.getElementById("sc-clock-curve"),
   clockSlideStatus: document.getElementById("sc-clock-slide-status"),
   sliderMode: document.getElementById("sc-slider-mode"),
   midiInput: document.getElementById("sc-midi-input"),
@@ -1511,13 +1518,14 @@ const MIDI_CLOCK_PPQ = 24;
 const CLOCK_BEATS_PER_BAR = 4;
 
 let clockSlideCfg = (() => {
-  const def = { enabled: false, bars: 8 };
+  const def = { enabled: false, bars: 8, curve: DEFAULT_CURVE_ID };
   try {
     const raw = localStorage.getItem(CLOCK_SLIDE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       def.enabled = !!parsed.enabled;
       def.bars = parsed.bars ?? def.bars;
+      def.curve = parsed.curve || DEFAULT_CURVE_ID;
     }
   } catch (e) {
     console.warn("clock slide cfg load failed", e);
@@ -1525,6 +1533,10 @@ let clockSlideCfg = (() => {
   def.bars = clamp(Math.round(def.bars) || 8, 1, 64);
   return def;
 })();
+
+function clockSlidePosition(linearT) {
+  return applySweepCurve(linearT, clockSlideCfg.curve);
+}
 
 let clockState = {
   tick: 0,
@@ -1644,8 +1656,8 @@ function syncClockSlideFromBeats(quarterNoteBeats) {
 
 function applyClockSlidePos() {
   const cycle = clockSlideCycleTicks();
-  const pos = (clockState.tick % cycle) / cycle;
-  setCrossfaderPos(pos);
+  const linearT = (clockState.tick % cycle) / cycle;
+  setCrossfaderPos(clockSlidePosition(linearT));
   renderClockSlideStatus();
 }
 
@@ -1680,8 +1692,7 @@ function onClockSlideClockTick() {
       return;
     }
     clockState.tick = elapsed;
-    const pos = elapsed / cycle;
-    setCrossfaderPos(pos);
+    setCrossfaderPos(clockSlidePosition(elapsed / cycle));
     renderClockSlideStatus();
     return;
   }
@@ -1938,9 +1949,39 @@ function handleClockSlide(port, bytes) {
   }
 }
 
+function populateClockSlideCurveSelect() {
+  if (!el.clockCurve) return;
+  const selected = clockSlideCfg.curve || DEFAULT_CURVE_ID;
+  const options = listCurveOptions();
+  el.clockCurve.replaceChildren();
+
+  let currentGroup = null;
+  for (const opt of options) {
+    if (opt.group !== currentGroup) {
+      currentGroup = opt.group;
+      const group = document.createElement("optgroup");
+      group.label = currentGroup === "custom" ? "Saved curves" : "Presets";
+      el.clockCurve.append(group);
+    }
+    const option = document.createElement("option");
+    option.value = opt.id;
+    option.textContent = opt.name;
+    el.clockCurve.lastElementChild.append(option);
+  }
+
+  if ([...el.clockCurve.options].some((o) => o.value === selected)) {
+    el.clockCurve.value = selected;
+  } else {
+    clockSlideCfg.curve = DEFAULT_CURVE_ID;
+    el.clockCurve.value = DEFAULT_CURVE_ID;
+    saveClockSlideCfg();
+  }
+}
+
 function renderClockSlideControls() {
   if (el.clockSlide) el.clockSlide.checked = clockSlideCfg.enabled;
   if (el.clockBars) el.clockBars.value = String(clockSlideCfg.bars);
+  populateClockSlideCurveSelect();
   renderClockSlideStatus();
 }
 
@@ -1982,9 +2023,23 @@ if (el.clockBars) {
     renderClockSlideStatus();
   });
 }
+if (el.clockCurve) {
+  el.clockCurve.addEventListener("change", () => {
+    clockSlideCfg.curve = el.clockCurve.value || DEFAULT_CURVE_ID;
+    saveClockSlideCfg();
+    if (isClockSlideEngaged() && clockState.running && !clockState.pausedByUser) {
+      applyClockSlidePos();
+    }
+    renderClockSlideStatus();
+  });
+}
 if (el.clockSlideOnce) {
   el.clockSlideOnce.addEventListener("click", () => armClockSlideOneShot());
 }
+
+window.addEventListener("storage", (e) => {
+  if (e.key === CUSTOM_CURVES_KEY) populateClockSlideCurveSelect();
+});
 
 el.captureBase.addEventListener("click", () => {
   captureBaseline({ explicit: true });

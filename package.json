@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test web/scenes-morph.test.mjs"
+    "test": "node --test web/scenes-morph.test.mjs web/sweep-curves.test.mjs"
   }
 }

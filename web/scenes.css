@@ -407,6 +407,23 @@ body {
 
 .sc-xf-clock-bars input[type="number"] { width: 3rem; }
 
+.sc-xf-clock-curve {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sc-xf-clock-curve select {
+  min-width: 9rem;
+  max-width: 12rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
 /* Collapsible sections */
 .sc-scenes-panel,
 .sc-picker-panel,
