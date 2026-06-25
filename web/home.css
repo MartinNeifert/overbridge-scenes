@@ -15,28 +15,6 @@ body {
   min-height: 100vh;
 }
 
-.home-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.85rem var(--page-pad);
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-}
-
-.home-header h1 {
-  margin: 0;
-  font-size: 1.25rem;
-  font-weight: 600;
-}
-
-.home-sub {
-  margin: 0.2rem 0 0;
-  font-size: 0.85rem;
-  color: var(--muted);
-}
-
 .home-main {
   max-width: 720px;
   margin: 0 auto;

@@ -43,7 +43,7 @@ const el = {
   slider: document.getElementById("remote-slider"),
   readout: document.getElementById("remote-readout"),
   quadReadout: document.getElementById("remote-quad-readout"),
-  meta: document.getElementById("remote-meta"),
+  conn: document.getElementById("remote-conn"),
   status: document.getElementById("remote-status"),
   nameA: document.getElementById("remote-name-a"),
   nameB: document.getElementById("remote-name-b"),
@@ -420,14 +420,21 @@ function renderReadout() {
   el.slider.value = String(Math.round(crossfader.pos * 1000));
 }
 
+function setConnected(connected) {
+  if (!el.conn) return;
+  el.conn.classList.toggle("connected", connected);
+  el.conn.setAttribute("aria-label", connected ? "Connected" : "Disconnected");
+  el.conn.title = connected ? "Connected" : "Disconnected";
+}
+
 function setStatus(msg, isError = false) {
   if (!el.status) return;
   el.status.textContent = msg || "";
   el.status.classList.toggle("error", !!isError);
 }
 
-function setMeta(lines) {
-  if (el.meta) el.meta.textContent = lines.filter(Boolean).join(" · ");
+function setMeta(_lines) {
+  // Remote header shows connection via dot only.
 }
 
 async function loadScenesForPattern(patKey) {
@@ -485,7 +492,10 @@ function ingestParameters(list) {
 function connectWs() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/api/ws`);
-  ws.onopen = () => setStatus("");
+  ws.onopen = () => {
+    setConnected(true);
+    setStatus("");
+  };
   ws.onmessage = (ev) => {
     let msg;
     try {
@@ -503,6 +513,7 @@ function connectWs() {
     }
   };
   ws.onclose = () => {
+    setConnected(false);
     setStatus("Disconnected — reconnecting…", true);
     setTimeout(connectWs, 2000);
   };
@@ -577,9 +588,10 @@ bindXfPad(el.pad, el.padHandle, {
       setStatus(host ? `On your phone: ${host} (or ${ip})` : `On your phone: ${ip}`);
     }
     connectWs();
+    setConnected(true);
   } catch (e) {
     console.warn("boot failed", e);
-    setMeta("Not connected");
+    setConnected(false);
     setStatus("Cannot reach ob-host on this address", true);
   }
 })();

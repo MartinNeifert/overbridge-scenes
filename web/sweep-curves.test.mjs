@@ -1,12 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import {
-  applySweepCurve,
-  normalizeCurvePoints,
-  presetCurvePoints,
-  resamplePolyline,
-  sampleCurvePoints,
-} from "./sweep-curves.mjs";
+import { applySweepCurve, listCurveOptions } from "./sweep-curves.mjs";
 
 describe("applySweepCurve", () => {
   it("returns linear time for linear preset", () => {
@@ -31,60 +25,16 @@ describe("applySweepCurve", () => {
     assert.equal(applySweepCurve(2, "ease-out"), 1);
   });
 
-  it("interpolates custom curves", () => {
-    const custom = {
-      Demo: [
-        { x: 0, y: 0 },
-        { x: 0.5, y: 0.25 },
-        { x: 1, y: 1 },
-      ],
-    };
-    const mid = applySweepCurve(0.5, "custom:Demo", custom);
-    assert.ok(Math.abs(mid - 0.25) < 1e-6);
+  it("falls back to linear for removed custom curve ids", () => {
+    assert.equal(applySweepCurve(0.4, "custom:Demo"), 0.4);
   });
 });
 
-describe("normalizeCurvePoints", () => {
-  it("forces endpoints at 0 and 1", () => {
-    const out = normalizeCurvePoints([{ x: 0.2, y: 0.3 }, { x: 0.8, y: 0.9 }]);
-    assert.equal(out[0].x, 0);
-    assert.equal(out[out.length - 1].x, 1);
-  });
-});
-
-describe("resamplePolyline", () => {
-  it("returns normalized endpoints", () => {
-    const out = resamplePolyline(
-      [
-        { x: 0, y: 0 },
-        { x: 0.5, y: 0.5 },
-        { x: 1, y: 1 },
-      ],
-      8
-    );
-    assert.equal(out[0].x, 0);
-    assert.equal(out[0].y, 0);
-    assert.equal(out[out.length - 1].x, 1);
-    assert.equal(out[out.length - 1].y, 1);
-  });
-});
-
-describe("presetCurvePoints", () => {
-  it("samples preset curves across 0..1", () => {
-    const pts = presetCurvePoints("sine", 5);
-    assert.equal(pts.length, 5);
-    assert.equal(pts[0].x, 0);
-    assert.equal(pts[pts.length - 1].x, 1);
-  });
-});
-
-describe("sampleCurvePoints", () => {
-  it("returns endpoint values", () => {
-    const pts = [
-      { x: 0, y: 0.1 },
-      { x: 1, y: 0.9 },
-    ];
-    assert.equal(sampleCurvePoints(0, pts), 0.1);
-    assert.equal(sampleCurvePoints(1, pts), 0.9);
+describe("listCurveOptions", () => {
+  it("lists preset curves only", () => {
+    const options = listCurveOptions();
+    assert.ok(options.length > 3);
+    assert.ok(options.every((o) => !o.id.startsWith("custom:")));
+    assert.ok(options.some((o) => o.id === "linear"));
   });
 });

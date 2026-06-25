@@ -24,36 +24,22 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: max(1rem, env(safe-area-inset-top)) 1rem max(1.5rem, env(safe-area-inset-bottom));
+  padding: max(0.75rem, env(safe-area-inset-top)) 1rem max(1.5rem, env(safe-area-inset-bottom));
   gap: 1rem;
 }
 
-.remote-header {
-  width: 100%;
-  max-width: 320px;
-  text-align: center;
+.remote-conn {
+  align-self: flex-end;
+  display: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
-.remote-header-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  width: 100%;
-}
-
-.remote-title {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 600;
-  text-align: left;
-}
-
-.remote-meta {
-  margin: 0.35rem 0 0;
-  font-size: 0.78rem;
-  color: var(--muted);
-  line-height: 1.35;
+.remote-conn.connected {
+  display: block;
+  background: var(--success);
 }
 
 .remote-ab,

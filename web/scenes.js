@@ -25,7 +25,6 @@ import {
   crossfaderHasAssignments,
 } from "./scenes-morph.mjs";
 import {
-  CUSTOM_CURVES_KEY,
   DEFAULT_CURVE_ID,
   applySweepCurve,
   listCurveOptions,
@@ -1965,21 +1964,13 @@ function handleClockSlide(port, bytes) {
 function populateClockSlideCurveSelect() {
   if (!el.clockCurve) return;
   const selected = clockSlideCfg.curve || DEFAULT_CURVE_ID;
-  const options = listCurveOptions();
   el.clockCurve.replaceChildren();
 
-  let currentGroup = null;
-  for (const opt of options) {
-    if (opt.group !== currentGroup) {
-      currentGroup = opt.group;
-      const group = document.createElement("optgroup");
-      group.label = currentGroup === "custom" ? "Saved curves" : "Presets";
-      el.clockCurve.append(group);
-    }
+  for (const opt of listCurveOptions()) {
     const option = document.createElement("option");
     option.value = opt.id;
     option.textContent = opt.name;
-    el.clockCurve.lastElementChild.append(option);
+    el.clockCurve.append(option);
   }
 
   if ([...el.clockCurve.options].some((o) => o.value === selected)) {
@@ -2049,10 +2040,6 @@ if (el.clockCurve) {
 if (el.clockSlideOnce) {
   el.clockSlideOnce.addEventListener("click", () => armClockSlideOneShot());
 }
-
-window.addEventListener("storage", (e) => {
-  if (e.key === CUSTOM_CURVES_KEY) populateClockSlideCurveSelect();
-});
 
 el.captureBase.addEventListener("click", () => {
   captureBaseline({ explicit: true });

@@ -5,9 +5,10 @@ async function refreshStatus() {
     const res = await fetch("/api/status");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    const plugin = data.plugin_loaded ? data.plugin_name || "plugin loaded" : "no plugin loaded";
-    const port = data.port ?? "7780";
-    statusEl.textContent = `Host running on port ${port} · ${plugin}`;
+    const plugin = data.plugin || "no plugin loaded";
+    const port = data.api_port ?? "7780";
+    const engine = data.engine_running ? "Engine on" : "Engine off";
+    statusEl.textContent = `Host on port ${port} · ${plugin} · ${engine}`;
     statusEl.className = "home-hint ok";
   } catch {
     statusEl.textContent = "Host not reachable — start ob-host and reload.";

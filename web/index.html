@@ -6,15 +6,20 @@
   <title>Overbridge Scenes</title>
   <script src="theme.js"></script>
   <link rel="stylesheet" href="theme.css" />
+  <link rel="stylesheet" href="page-header.css" />
+  <link rel="stylesheet" href="device-header.css" />
   <link rel="stylesheet" href="home.css" />
 </head>
 <body>
-  <header class="home-header">
-    <div>
+  <header class="ob-page-header">
+    <div class="ob-page-header-title">
       <h1>Overbridge Scenes</h1>
-      <p class="home-sub">Control surface for the Overbridge VST host</p>
+      <p class="ob-page-sub">Control surface for the Overbridge VST host</p>
     </div>
-    <button type="button" class="ob-theme-toggle" aria-label="Switch to light theme">Light</button>
+    <div class="ob-page-header-actions">
+      <div id="ob-device-header"></div>
+      <button type="button" class="ob-theme-toggle" aria-label="Switch to light theme">Light</button>
+    </div>
   </header>
 
   <main class="home-main">
@@ -34,12 +39,6 @@
           </a>
         </li>
         <li>
-          <a href="/curves.html">
-            <span class="home-nav-title">Sweep Curves</span>
-            <span class="home-nav-desc">Draw and save custom curves for automated clock slides</span>
-          </a>
-        </li>
-        <li>
           <a href="/remote.html">
             <span class="home-nav-title">Remote Crossfader</span>
             <span class="home-nav-desc">Phone-friendly crossfader-only page for Wi‑Fi control</span>
@@ -55,5 +54,6 @@
   </main>
 
   <script type="module" src="home.js"></script>
+  <script src="device-header.js"></script>
 </body>
 </html>

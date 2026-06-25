@@ -72,3 +72,14 @@
   color: var(--text);
   background: var(--btn-hover);
 }
+
+.ob-home-link {
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.ob-home-link:hover {
+  color: var(--text);
+}

@@ -1,6 +1,5 @@
-// Sweep curve presets + custom curve storage for clock-driven crossfader slides.
+// Sweep curve presets for clock-driven crossfader slides.
 
-export const CUSTOM_CURVES_KEY = "ob-sweep-curves:custom";
 export const DEFAULT_CURVE_ID = "linear";
 
 export function clamp(t, lo = 0, hi = 1) {
@@ -69,157 +68,14 @@ export const PRESET_CURVES = {
   },
 };
 
-export function loadCustomCurves() {
-  try {
-    const raw = localStorage.getItem(CUSTOM_CURVES_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
+export function listCurveOptions() {
+  return Object.entries(PRESET_CURVES).map(([id, { name }]) => ({ id, name }));
 }
 
-export function saveCustomCurves(curves) {
-  localStorage.setItem(CUSTOM_CURVES_KEY, JSON.stringify(curves));
-}
-
-export function listCurveOptions(customCurves = null) {
-  const customs = customCurves ?? loadCustomCurves();
-  const presets = Object.entries(PRESET_CURVES).map(([id, { name }]) => ({
-    id,
-    name,
-    group: "preset",
-  }));
-  const customList = Object.keys(customs)
-    .sort((a, b) => a.localeCompare(b))
-    .map((name) => ({ id: `custom:${name}`, name, group: "custom" }));
-  return [...presets, ...customList];
-}
-
-export function sampleCurvePoints(t, points) {
-  const x = clamp(t);
-  if (!points?.length) return x;
-  const sorted = normalizeCurvePoints(points);
-  if (sorted.length === 1) return clamp(sorted[0].y);
-
-  if (x <= sorted[0].x) return clamp(sorted[0].y);
-  const last = sorted[sorted.length - 1];
-  if (x >= last.x) return clamp(last.y);
-
-  for (let i = 0; i < sorted.length - 1; i += 1) {
-    const a = sorted[i];
-    const b = sorted[i + 1];
-    if (x < a.x || x > b.x) continue;
-    const span = b.x - a.x;
-    if (span <= 0) return clamp(a.y);
-    const u = (x - a.x) / span;
-    return clamp(a.y + (b.y - a.y) * u);
-  }
-  return x;
-}
-
-export function normalizeCurvePoints(points) {
-  if (!Array.isArray(points) || !points.length) return [];
-
-  const cleaned = points
-    .map((p) => ({ x: clamp(Number(p.x)), y: clamp(Number(p.y)) }))
-    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y))
-    .sort((a, b) => a.x - b.x);
-
-  if (!cleaned.length) return [];
-
-  const monotonic = [];
-  let maxX = -Infinity;
-  for (const p of cleaned) {
-    const x = Math.max(p.x, maxX);
-    maxX = x;
-    monotonic.push({ x, y: p.y });
-  }
-
-  if (monotonic[0].x > 0) monotonic.unshift({ x: 0, y: monotonic[0].y });
-  else monotonic[0] = { ...monotonic[0], x: 0 };
-
-  const tail = monotonic[monotonic.length - 1];
-  if (tail.x < 1) monotonic.push({ x: 1, y: tail.y });
-  else monotonic[monotonic.length - 1] = { ...tail, x: 1 };
-
-  monotonic[0] = { x: 0, y: clamp(monotonic[0].y) };
-  monotonic[monotonic.length - 1] = {
-    x: 1,
-    y: clamp(monotonic[monotonic.length - 1].y),
-  };
-
-  return monotonic;
-}
-
-export function applySweepCurve(t, curveId, customCurves = null) {
+export function applySweepCurve(t, curveId) {
   const linearT = clamp(t);
-  const id = curveId || DEFAULT_CURVE_ID;
-
-  if (id.startsWith("custom:")) {
-    const name = id.slice("custom:".length);
-    const curves = customCurves ?? loadCustomCurves();
-    const points = curves[name];
-    if (!points) return linearT;
-    return sampleCurvePoints(linearT, points);
-  }
-
+  const id = curveId?.startsWith("custom:") ? DEFAULT_CURVE_ID : curveId || DEFAULT_CURVE_ID;
   const preset = PRESET_CURVES[id];
   if (!preset) return linearT;
   return clamp(preset.fn(linearT));
-}
-
-export function resamplePolyline(rawPoints, sampleCount = 64) {
-  if (!rawPoints?.length) return [];
-  if (rawPoints.length === 1) {
-    return normalizeCurvePoints([
-      { x: 0, y: rawPoints[0].y },
-      { x: 1, y: rawPoints[0].y },
-    ]);
-  }
-
-  const lengths = [0];
-  let total = 0;
-  for (let i = 1; i < rawPoints.length; i += 1) {
-    const dx = rawPoints[i].x - rawPoints[i - 1].x;
-    const dy = rawPoints[i].y - rawPoints[i - 1].y;
-    total += Math.hypot(dx, dy);
-    lengths.push(total);
-  }
-  if (total <= 0) {
-    return normalizeCurvePoints([
-      { x: 0, y: rawPoints[0].y },
-      { x: 1, y: rawPoints[rawPoints.length - 1].y },
-    ]);
-  }
-
-  const samples = [];
-  for (let i = 0; i < sampleCount; i += 1) {
-    const target = (total * i) / (sampleCount - 1);
-    let seg = 0;
-    while (seg < lengths.length - 2 && lengths[seg + 1] < target) seg += 1;
-    const segStart = lengths[seg];
-    const segEnd = lengths[seg + 1];
-    const span = segEnd - segStart || 1;
-    const u = (target - segStart) / span;
-    const a = rawPoints[seg];
-    const b = rawPoints[seg + 1];
-    samples.push({
-      x: a.x + (b.x - a.x) * u,
-      y: a.y + (b.y - a.y) * u,
-    });
-  }
-
-  return normalizeCurvePoints(samples);
-}
-
-export function presetCurvePoints(curveId, sampleCount = 64) {
-  const fn = PRESET_CURVES[curveId]?.fn ?? PRESET_FNS.linear;
-  const points = [];
-  for (let i = 0; i < sampleCount; i += 1) {
-    const x = i / (sampleCount - 1);
-    points.push({ x, y: clamp(fn(x)) });
-  }
-  return points;
 }

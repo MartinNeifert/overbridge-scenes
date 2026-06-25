@@ -26,48 +26,6 @@ body {
   gap: var(--section-gap);
 }
 
-/* Header */
-.sc-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.85rem var(--page-pad);
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  flex-wrap: wrap;
-}
-
-.sc-title h1 {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 600;
-}
-
-.sc-sub {
-  margin: 0.15rem 0 0;
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-
-.sc-header-right {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.sc-header-midi { min-width: 0; }
-
-.sc-link {
-  font-size: 0.8rem;
-  color: var(--muted);
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.sc-link:hover { color: var(--text); }
-
 /* Shared form controls */
 .sc-main select,
 .sc-main input[type="search"],
