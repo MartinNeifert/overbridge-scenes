@@ -155,6 +155,17 @@ describe("crossfader morph", () => {
     assert.ok(Math.abs(valueAtStart - 0.6) < 1e-6);
   });
 
+  it("pickup does not engage on a small fader move when live is outside the sweep", () => {
+    const crossfader = { a: "1", b: "2", pos: 0.0 };
+    const grab = beginXfGrab(crossfader, scenes, ctx({ liveValues: new Map([[0, 0.6]]) }));
+    const morph = { ...ctx(), xfGrab: grab };
+    const sceneA = sceneById(scenes, "1");
+    const sceneB = sceneById(scenes, "2");
+    const held = morphParamValue(0, 0.1, sceneA, sceneB, morph, "pickup");
+    assert.ok(Math.abs(held - 0.6) < 1e-6, "still holds live after 10% move");
+    assert.equal(grab.per.get(0).engaged, false);
+  });
+
   it("pickup engages when the morph sweep passes through the live value", () => {
     const crossfader = { a: "1", b: "2", pos: 0.0 };
     const grab = beginXfGrab(crossfader, scenes, ctx({ liveValues: new Map([[0, 0.5]]) }));

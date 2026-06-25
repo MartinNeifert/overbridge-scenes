@@ -677,7 +677,7 @@ function onQuadGrabEnd() {
       setQuadPos(x, y);
       updatePadHandle(el.xfPad, el.xfPadHandle, x, y);
       renderCrossfaderReadout();
-      applyCrossfade();
+      applyCrossfade({ force: true });
     },
     () => {
       quadSnapCancel = null;
@@ -717,7 +717,7 @@ function onAbGrabEnd() {
       crossfader.pos = pos;
       el.crossfader.value = String(Math.round(pos * 1000));
       renderCrossfaderReadout();
-      applyCrossfade();
+      applyCrossfade({ force: true });
     },
     () => {
       abSnapCancel = null;
@@ -1445,7 +1445,7 @@ bindXfPad(el.xfPad, el.xfPadHandle, {
     cancelQuadSnap();
     pauseClockSlideManual();
     beginXfGrab();
-    applyCrossfade();
+    if (sliderMode === "jump") applyCrossfade();
   },
   onGrabEnd: onQuadGrabEnd,
   onChange: () => {
@@ -1473,13 +1473,17 @@ el.abReleaseSnap?.addEventListener("change", () => {
   save();
 });
 
-el.crossfader.addEventListener("pointerdown", (ev) => {
+function onCrossfaderGrabStart(ev) {
   cancelAbSnap();
   pauseClockSlideManual();
   ev.target.setPointerCapture?.(ev.pointerId);
   beginXfGrab();
-  applyCrossfade();
-});
+  // Pickup/scale defer writes until the fader moves — avoid jumping to the
+  // morph position on pointerdown when live differs from the slider.
+  if (sliderMode === "jump") applyCrossfade();
+}
+
+el.crossfader.addEventListener("pointerdown", onCrossfaderGrabStart);
 el.crossfader.addEventListener("pointerup", onAbGrabEnd);
 el.crossfader.addEventListener("pointercancel", onAbGrabEnd);
 

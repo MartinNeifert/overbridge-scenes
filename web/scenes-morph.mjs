@@ -202,7 +202,6 @@ export function computeMorphValue({ mode, t, t0, v0, av, bv, engaged }) {
       const lo = Math.min(ideal0, ideal);
       const hi = Math.max(ideal0, ideal);
       if (v0 >= lo - EPS && v0 <= hi + EPS) nextEngaged = true;
-      else if (Math.abs(t - t0) > 0.05) nextEngaged = true;
     }
     return { value: nextEngaged ? ideal : v0, engaged: nextEngaged };
   }
@@ -238,7 +237,8 @@ export function morphParamValue(
   const bv = endpointValue(sceneB, index, ctx);
 
   const mode = ctx.xfGrab && sliderMode !== "jump" ? sliderMode : "jump";
-  const t0 = ctx.xfGrab ? ctx.xfGrab.t0 : 0;
+  const t0 =
+    ctx.xfGrab?.mode === "ab" && Number.isFinite(ctx.xfGrab.t0) ? ctx.xfGrab.t0 : 0;
   const g = mode === "jump" ? null : ctx.xfGrab?.per?.get(index);
 
   let value;
