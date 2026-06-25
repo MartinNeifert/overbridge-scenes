@@ -20,25 +20,40 @@
       <p class="remote-meta" id="remote-meta">Connecting…</p>
     </header>
 
-    <div class="remote-labels">
-      <span class="remote-label remote-label-a" id="remote-name-a">A</span>
-      <span class="remote-readout" id="remote-readout">0%</span>
-      <span class="remote-label remote-label-b" id="remote-name-b">B</span>
+    <div class="remote-ab" id="remote-ab">
+      <div class="remote-labels">
+        <span class="remote-label remote-label-a" id="remote-name-a">A</span>
+        <span class="remote-readout" id="remote-readout">0%</span>
+        <span class="remote-label remote-label-b" id="remote-name-b">B</span>
+      </div>
+
+      <div class="remote-track">
+        <input type="range" id="remote-slider" min="0" max="1000" step="1" value="0"
+          aria-label="Crossfader" />
+      </div>
+
+      <div class="remote-jumps">
+        <button type="button" id="remote-jump-a" class="remote-btn">A</button>
+        <button type="button" id="remote-jump-center" class="remote-btn">Center</button>
+        <button type="button" id="remote-jump-b" class="remote-btn">B</button>
+      </div>
     </div>
 
-    <div class="remote-track">
-      <input type="range" id="remote-slider" min="0" max="1000" step="1" value="0"
-        aria-label="Crossfader" />
-    </div>
-
-    <div class="remote-jumps">
-      <button type="button" id="remote-jump-a" class="remote-btn">A</button>
-      <button type="button" id="remote-jump-center" class="remote-btn">Center</button>
-      <button type="button" id="remote-jump-b" class="remote-btn">B</button>
+    <div class="remote-quad hidden" id="remote-quad">
+      <div class="remote-pad-wrap">
+        <div class="remote-pad" id="remote-pad" aria-label="2D crossfader grid">
+          <span class="remote-pad-corner remote-pad-tl" id="remote-pad-label-tl"></span>
+          <span class="remote-pad-corner remote-pad-tr" id="remote-pad-label-tr"></span>
+          <span class="remote-pad-corner remote-pad-bl" id="remote-pad-label-bl"></span>
+          <span class="remote-pad-corner remote-pad-br" id="remote-pad-label-br"></span>
+          <div class="remote-pad-handle" id="remote-pad-handle"></div>
+        </div>
+        <div class="remote-quad-readout" id="remote-quad-readout">50% · 50%</div>
+      </div>
     </div>
 
     <p class="remote-status" id="remote-status" aria-live="polite"></p>
   </div>
-  <script src="remote.js"></script>
+  <script type="module" src="remote.js"></script>
 </body>
 </html>

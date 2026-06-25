@@ -3,15 +3,22 @@ import assert from "node:assert/strict";
 import {
   clamp,
   unionIndices,
+  bilinearWeights,
+  bilinearWeightsAssigned,
+  isQuadCenter,
+  quadSnapPosition,
   computeCrossfadeUpdates,
+  computeQuadUpdates,
   morphParamValue,
   beginXfGrab,
 } from "./scenes-morph.mjs";
 
 const scenes = [
-  { id: "1", name: "Scene 1", params: [{ index: 0, id: 1, name: "Cutoff", value: 0.2 }] },
-  { id: "2", name: "Scene 2", params: [{ index: 0, id: 1, name: "Cutoff", value: 0.8 }] },
-  { id: "3", name: "Scene 3", params: [{ index: 1, id: 2, name: "Reso", value: 0.5 }] },
+  { id: "1", name: "Scene 1", params: [{ index: 0, id: 1, name: "Cutoff", value: 0.0 }] },
+  { id: "2", name: "Scene 2", params: [{ index: 0, id: 1, name: "Cutoff", value: 1.0 }] },
+  { id: "3", name: "Scene 3", params: [{ index: 0, id: 1, name: "Cutoff", value: 0.0 }] },
+  { id: "4", name: "Scene 4", params: [{ index: 0, id: 1, name: "Cutoff", value: 1.0 }] },
+  { id: "5", name: "Scene 5", params: [{ index: 1, id: 2, name: "Reso", value: 0.5 }] },
 ];
 
 function ctx(overrides = {}) {
@@ -37,8 +44,34 @@ describe("clamp", () => {
 
 describe("unionIndices", () => {
   it("collects params from both assigned scenes", () => {
-    const indices = unionIndices({ a: "1", b: "3", pos: 0 }, scenes);
+    const indices = unionIndices({ a: "1", b: "5", pos: 0 }, scenes);
     assert.deepEqual(indices.sort(), [0, 1]);
+  });
+
+  it("collects params from all quad corners", () => {
+    const indices = unionIndices(
+      { mode: "quad", corners: { tl: "1", tr: "5", bl: "3", br: "4" }, x: 0.5, y: 0.5 },
+      scenes
+    );
+    assert.deepEqual(indices.sort(), [0, 1]);
+  });
+});
+
+describe("bilinearWeights", () => {
+  it("sums to 1 at corners and center", () => {
+    const corners = [
+      bilinearWeights(0, 0),
+      bilinearWeights(1, 0),
+      bilinearWeights(0, 1),
+      bilinearWeights(1, 1),
+      bilinearWeights(0.5, 0.5),
+    ];
+    for (const w of corners) {
+      const sum = w.tl + w.tr + w.bl + w.br;
+      assert.ok(Math.abs(sum - 1) < 1e-9);
+    }
+    assert.equal(bilinearWeights(0, 0).tl, 1);
+    assert.equal(bilinearWeights(1, 1).br, 1);
   });
 });
 
@@ -62,7 +95,7 @@ describe("crossfader morph", () => {
     );
     const cutoff = updates.find((u) => u.index === 0);
     assert.ok(cutoff);
-    // Scene 1 locks 0.2; empty B uses live/baseline 0.0 → at t=1 → 0.0
+    // Scene 1 locks 0.0; empty B uses live/baseline 0.0 → at t=1 → 0.0
     assert.ok(Math.abs(cutoff.value - 0.0) < 1e-6);
   });
 
@@ -78,8 +111,8 @@ describe("crossfader morph", () => {
     );
     const cutoff = updates.find((u) => u.index === 0);
     assert.ok(cutoff);
-    // t=0 on A side → scene lock 0.2
-    assert.ok(Math.abs(cutoff.value - 0.2) < 1e-6);
+    // t=0 on A side → scene lock 0.0
+    assert.ok(Math.abs(cutoff.value - 0.0) < 1e-6);
   });
 
   it("returns no updates when both sides are none", () => {
@@ -117,6 +150,102 @@ describe("crossfader morph", () => {
       "pickup"
     );
     assert.ok(Math.abs(valueAtStart - 0.6) < 1e-6);
+  });
+});
+
+describe("quad crossfader morph", () => {
+  const quad = {
+    mode: "quad",
+    corners: { tl: "1", tr: "2", bl: "3", br: "4" },
+    x: 0.5,
+    y: 0.5,
+  };
+
+  it("interpolates bilinearly at center", () => {
+    const updates = computeQuadUpdates(quad, scenes, ctx());
+    const cutoff = updates.find((u) => u.index === 0);
+    assert.ok(cutoff);
+    assert.ok(Math.abs(cutoff.value - 0.5) < 1e-6);
+  });
+
+  it("hits corner values at corners", () => {
+    const tl = computeQuadUpdates({ ...quad, x: 0, y: 0 }, scenes, ctx());
+    const br = computeQuadUpdates({ ...quad, x: 1, y: 1 }, scenes, ctx());
+    assert.ok(Math.abs(tl.find((u) => u.index === 0).value - 0.0) < 1e-6);
+    assert.ok(Math.abs(br.find((u) => u.index === 0).value - 1.0) < 1e-6);
+  });
+
+  it("dispatches through computeCrossfadeUpdates", () => {
+    const updates = computeCrossfadeUpdates(quad, scenes, ctx());
+    const cutoff = updates.find((u) => u.index === 0);
+    assert.ok(cutoff);
+    assert.ok(Math.abs(cutoff.value - 0.5) < 1e-6);
+  });
+
+  it("returns no updates when no corners are assigned", () => {
+    const updates = computeQuadUpdates(
+      { mode: "quad", corners: { tl: null, tr: null, bl: null, br: null }, x: 0.5, y: 0.5 },
+      scenes,
+      ctx()
+    );
+    assert.equal(updates.length, 0);
+  });
+
+  it("interpolation mode averages assigned scenes at center when corners are missing", () => {
+    const updates = computeQuadUpdates(
+      {
+        mode: "quad",
+        quadCenterMode: "interpolation",
+        corners: { tl: "1", tr: null, bl: null, br: "4" },
+        x: 0.5,
+        y: 0.5,
+      },
+      scenes,
+      ctx()
+    );
+    const cutoff = updates.find((u) => u.index === 0);
+    assert.ok(cutoff);
+    assert.ok(Math.abs(cutoff.value - 0.5) < 1e-6);
+  });
+
+  it("baseline mode uses pattern baseline at center", () => {
+    const updates = computeQuadUpdates(
+      {
+        mode: "quad",
+        quadCenterMode: "baseline",
+        corners: { tl: "1", tr: "2", bl: "3", br: "4" },
+        x: 0.5,
+        y: 0.5,
+      },
+      scenes,
+      ctx({
+        baselineExplicit: true,
+        baseline: new Map([[0, 0.25]]),
+        liveValues: new Map([[0, 0.9]]),
+      })
+    );
+    const cutoff = updates.find((u) => u.index === 0);
+    assert.ok(cutoff);
+    assert.ok(Math.abs(cutoff.value - 0.25) < 1e-6);
+  });
+
+  it("bilinearWeightsAssigned renormalizes when corners are missing", () => {
+    const w = bilinearWeightsAssigned(0.5, 0.5, { tl: true, tr: false, bl: false, br: true });
+    assert.ok(Math.abs(w.tl - 0.5) < 1e-9);
+    assert.ok(Math.abs(w.br - 0.5) < 1e-9);
+    assert.equal(w.tr, 0);
+    assert.equal(w.bl, 0);
+  });
+
+  it("isQuadCenter detects grid middle", () => {
+    assert.equal(isQuadCenter(0.5, 0.5), true);
+    assert.equal(isQuadCenter(0.49, 0.5), false);
+  });
+
+  it("quadSnapPosition maps release targets", () => {
+    assert.deepEqual(quadSnapPosition("center"), { x: 0.5, y: 0.5 });
+    assert.deepEqual(quadSnapPosition("tl"), { x: 0, y: 0 });
+    assert.equal(quadSnapPosition("none"), null);
   });
 });
 
