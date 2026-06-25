@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sweep Curves — Overbridge Scenes</title>
+  <script src="theme.js"></script>
+  <link rel="stylesheet" href="theme.css" />
+  <link rel="stylesheet" href="curves.css" />
+</head>
+<body>
+  <header class="cv-header">
+    <div>
+      <h1>Sweep Curves</h1>
+      <p class="cv-sub">Draw and save curves for clock-driven crossfader sweeps</p>
+    </div>
+    <div class="cv-header-right">
+      <button type="button" class="ob-theme-toggle" aria-label="Switch to light theme">Light</button>
+      <a class="cv-link" href="/scenes.html">Scenes &amp; crossfader →</a>
+      <a class="cv-link" href="/">Home →</a>
+    </div>
+  </header>
+
+  <main class="cv-main">
+    <section class="cv-panel">
+      <h2>Draw curve</h2>
+      <p class="cv-hint">Drag on the graph to sketch a sweep shape. Time runs left → right; crossfader position runs bottom → top.</p>
+      <div class="cv-canvas-wrap">
+        <canvas id="cv-canvas" class="cv-canvas" width="640" height="320" aria-label="Curve editor"></canvas>
+      </div>
+      <div class="cv-toolbar">
+        <input type="text" id="cv-name" placeholder="Curve name" maxlength="48" />
+        <button type="button" id="cv-save" class="cv-btn cv-btn-primary">Save curve</button>
+        <button type="button" id="cv-clear" class="cv-btn">Clear</button>
+        <button type="button" id="cv-reset-linear" class="cv-btn">Reset to linear</button>
+      </div>
+      <p class="cv-status" id="cv-status" aria-live="polite"></p>
+    </section>
+
+    <section class="cv-panel">
+      <h2>Preset curves</h2>
+      <p class="cv-hint">Click a preset to load it into the editor. Tweak and save under your own name.</p>
+      <div class="cv-presets" id="cv-presets"></div>
+    </section>
+
+    <section class="cv-panel">
+      <h2>Saved curves</h2>
+      <p class="cv-hint">Saved curves appear in the Clock slide curve picker on the scenes page.</p>
+      <ul class="cv-saved-list" id="cv-saved"></ul>
+    </section>
+  </main>
+
+  <script type="module" src="curves.js"></script>
+</body>
+</html>

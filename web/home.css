@@ -1,0 +1,102 @@
+:root {
+  --radius: 6px;
+  --page-pad: 1rem;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.45;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+.home-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem var(--page-pad);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.home-header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.home-sub {
+  margin: 0.2rem 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.home-main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--page-pad) var(--page-pad) 2rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.home-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+}
+
+.home-panel h2 {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+}
+
+.home-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.home-nav {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.home-nav a {
+  display: block;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.home-nav a:hover {
+  border-color: var(--accent);
+  background: var(--btn-hover);
+}
+
+.home-nav-title {
+  display: block;
+  font-weight: 600;
+}
+
+.home-nav-desc {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.home-status-panel .home-hint.ok { color: var(--success); }
+.home-status-panel .home-hint.err { color: var(--status-err-text); }

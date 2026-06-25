@@ -29,6 +29,14 @@ header {
   flex-wrap: wrap;
 }
 
+.home-link {
+  font-size: 0.85rem;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.home-link:hover { color: var(--text); }
+
 .device-detail {
   font-size: 0.82rem;
   color: var(--muted);

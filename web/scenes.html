@@ -25,8 +25,9 @@
         </select>
       </label>
       <button type="button" class="ob-theme-toggle" aria-label="Switch to light theme">Light</button>
+      <a class="sc-link" href="/curves.html" title="Draw and save sweep curves for clock slide">Sweep curves →</a>
       <a class="sc-link" href="/remote.html" title="Crossfader-only page for phone/tablet on your Wi‑Fi">Remote slider →</a>
-      <a class="sc-link" href="/">Classic control surface →</a>
+      <a class="sc-link" href="/">Home →</a>
     </div>
   </header>
 
@@ -90,6 +91,10 @@
         </label>
         <button type="button" id="sc-clock-slide-once" class="sc-btn sc-btn-ghost sc-btn-sm"
           title="One left → right sweep over Bars, synced to the next bar 1, then stop">Once</button>
+        <label class="sc-xf-clock-curve" title="Easing curve for the automated sweep (time → crossfader position)">
+          <span class="sc-picker-label">Curve</span>
+          <select id="sc-clock-curve" aria-label="Clock slide sweep curve"></select>
+        </label>
         <label class="sc-xf-takeover" title="How the crossfader reconciles with live knob positions when you grab it">
           <span class="sc-picker-label">Takeover</span>
           <select id="sc-slider-mode" aria-label="Crossfader takeover mode">
