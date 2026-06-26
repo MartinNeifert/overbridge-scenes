@@ -1,0 +1,267 @@
+#!/usr/bin/env node
+/**
+ * Record short feature demo videos for the README using the fake-plugin host.
+ *
+ * Prerequisites:
+ *   OB_FAKE_PLUGIN=1 ./target/release/ob-host --fake-plugin --port 7780
+ *
+ * Usage:
+ *   node scripts/record-demo-videos.mjs
+ *   OB_DEMO_URL=http://127.0.0.1:7780 node scripts/record-demo-videos.mjs
+ */
+import { chromium } from "playwright";
+import { spawn } from "node:child_process";
+import { mkdir, rename, unlink } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.join(__dirname, "..");
+const OUT_DIR = path.join(ROOT, "docs", "videos");
+const TMP_DIR = path.join(OUT_DIR, ".tmp");
+const BASE_URL = process.env.OB_DEMO_URL || "http://127.0.0.1:7780";
+const PLUGIN = "OB Test Host";
+const PATTERN = "A01";
+
+async function waitForServer() {
+  for (let i = 0; i < 60; i++) {
+    try {
+      const res = await fetch(`${BASE_URL}/api/status`);
+      if (res.ok) return;
+    } catch {
+      /* retry */
+    }
+    await sleep(200);
+  }
+  throw new Error(`Server not reachable at ${BASE_URL}`);
+}
+
+async function seedDemoData() {
+  const payload = {
+    scenes: [
+      {
+        id: "1",
+        name: "Dark",
+        params: [
+          { index: 0, id: 1, name: "Filter Cutoff", value: 0.12 },
+          { index: 1, id: 2, name: "Filter Reso", value: 0.65 },
+          { index: 2, id: 3, name: "Drive", value: 0.35 },
+        ],
+      },
+      {
+        id: "2",
+        name: "Bright",
+        params: [
+          { index: 0, id: 1, name: "Filter Cutoff", value: 0.88 },
+          { index: 1, id: 2, name: "Filter Reso", value: 0.18 },
+          { index: 2, id: 3, name: "Drive", value: 0.08 },
+        ],
+      },
+      {
+        id: "3",
+        name: "Crunch",
+        params: [
+          { index: 0, id: 1, name: "Filter Cutoff", value: 0.45 },
+          { index: 2, id: 3, name: "Drive", value: 0.92 },
+        ],
+      },
+      {
+        id: "4",
+        name: "Wide",
+        params: [
+          { index: 0, id: 1, name: "Filter Cutoff", value: 0.72 },
+          { index: 1, id: 2, name: "Filter Reso", value: 0.05 },
+        ],
+      },
+    ],
+    crossfader: { mode: "ab", a: "1", b: "2", pos: 0 },
+    baseline: {
+      explicit: true,
+      values: [
+        { index: 0, id: 1, value: 0.5 },
+        { index: 1, id: 2, value: 0.25 },
+        { index: 2, id: 3, value: 0.0 },
+      ],
+    },
+  };
+
+  const res = await fetch(
+    `${BASE_URL}/api/scenes/${encodeURIComponent(PLUGIN)}/${PATTERN}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to seed scenes: ${res.status} ${await res.text()}`);
+  }
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function animateRange(page, selector, from, to, durationMs) {
+  await page.evaluate(
+    async ({ selector, from, to, durationMs }) => {
+      const el = document.querySelector(selector);
+      if (!el) throw new Error(`Missing ${selector}`);
+      const steps = Math.max(30, Math.round(durationMs / 16));
+      const delay = durationMs / steps;
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        const value = Math.round(from + (to - from) * eased);
+        el.value = String(value);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    },
+    { selector, from, to, durationMs },
+  );
+}
+
+async function convertToMp4(webmPath, mp4Path) {
+  await new Promise((resolve, reject) => {
+    const proc = spawn(
+      "ffmpeg",
+      [
+        "-y",
+        "-i",
+        webmPath,
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-crf",
+        "23",
+        "-preset",
+        "medium",
+        "-movflags",
+        "+faststart",
+        "-an",
+        mp4Path,
+      ],
+      { stdio: "inherit" },
+    );
+    proc.on("close", (code) =>
+      code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}`)),
+    );
+  });
+  await unlink(webmPath);
+}
+
+async function recordVideo(name, { viewport, setup, action }) {
+  await mkdir(TMP_DIR, { recursive: true });
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport,
+    recordVideo: { dir: TMP_DIR, size: viewport },
+    colorScheme: "dark",
+    deviceScaleFactor: 1,
+  });
+  const page = await context.newPage();
+  await setup(page);
+  await sleep(600);
+  await action(page);
+  await sleep(700);
+  const video = page.video();
+  await context.close();
+  await browser.close();
+
+  const webmPath = await video.path();
+  const mp4Path = path.join(OUT_DIR, `${name}.mp4`);
+  await convertToMp4(webmPath, mp4Path);
+  console.log(`✓ ${mp4Path}`);
+  return mp4Path;
+}
+
+async function recordScenesDemo() {
+  return recordVideo("scenes-crossfader", {
+    viewport: { width: 1280, height: 820 },
+    setup: async (page) => {
+      await page.goto(`${BASE_URL}/scenes.html`, { waitUntil: "networkidle" });
+      await page.waitForSelector("#sc-crossfader");
+      await page.waitForFunction(
+        () =>
+          document.querySelector("#sc-assign-a")?.value === "1" &&
+          document.querySelector("#sc-assign-b")?.value === "2",
+        { timeout: 10000 },
+      );
+    },
+    action: async (page) => {
+      await animateRange(page, "#sc-crossfader", 0, 1000, 2800);
+      await sleep(400);
+      await animateRange(page, "#sc-crossfader", 1000, 0, 2400);
+      await sleep(300);
+      await page.click("#sc-jump-b");
+      await sleep(500);
+      await page.click("#sc-jump-a");
+    },
+  });
+}
+
+async function recordParametersDemo() {
+  return recordVideo("classic-parameters", {
+    viewport: { width: 1280, height: 820 },
+    setup: async (page) => {
+      await page.goto(`${BASE_URL}/parameters.html`, {
+        waitUntil: "networkidle",
+      });
+      await page.waitForSelector("#parameters .param-card", { timeout: 10000 });
+    },
+    action: async (page) => {
+      const search = page.locator("#search");
+      await search.click();
+      await search.fill("Filter");
+      await sleep(800);
+      const pin = page.locator("#parameters .param-card .pin-btn").first();
+      await pin.click();
+      await sleep(500);
+      const slider = page.locator("#pinned-controls input[type='range']").first();
+      await slider.focus();
+      await animateRange(page, "#pinned-controls input[type='range']", 0, 850, 1800);
+      await sleep(400);
+      await animateRange(page, "#pinned-controls input[type='range']", 850, 200, 1600);
+    },
+  });
+}
+
+async function recordRemoteDemo() {
+  return recordVideo("remote-crossfader", {
+    viewport: { width: 390, height: 844 },
+    setup: async (page) => {
+      await page.goto(`${BASE_URL}/remote.html?pattern=${PATTERN}`, {
+        waitUntil: "networkidle",
+      });
+      await page.waitForSelector("#remote-slider");
+      await page.waitForSelector("#remote-name-a:not(:empty)", { timeout: 10000 });
+    },
+    action: async (page) => {
+      await animateRange(page, "#remote-slider", 0, 1000, 2600);
+      await sleep(400);
+      await animateRange(page, "#remote-slider", 1000, 500, 1400);
+      await sleep(300);
+      await page.click("#remote-jump-a");
+      await sleep(400);
+      await page.click("#remote-jump-b");
+    },
+  });
+}
+
+async function main() {
+  await mkdir(OUT_DIR, { recursive: true });
+  await waitForServer();
+  await seedDemoData();
+  console.log("Seeded demo scenes for", PLUGIN, PATTERN);
+  await recordScenesDemo();
+  await recordParametersDemo();
+  await recordRemoteDemo();
+  console.log("Done — videos in docs/videos/");
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

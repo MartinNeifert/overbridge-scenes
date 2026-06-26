@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test web/scenes-morph.test.mjs web/sweep-curves.test.mjs"
+    "test": "node --test web/scenes-morph.test.mjs web/sweep-curves.test.mjs",
+    "record-demos": "node scripts/record-demo-videos.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.61.1"
   }
 }
