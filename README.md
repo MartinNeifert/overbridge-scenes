@@ -26,30 +26,24 @@ plugin and serves the web UI from your Mac.
 Pattern bar, A/B assignment, crossfader, clock slide, four scene slots, and the
 parameter picker — the main event.
 
-<video src="docs/videos/scenes-crossfader.mp4" controls autoplay loop muted playsinline width="100%"></video>
-
-![Scenes and crossfader control surface](docs/screenshots/scenes.png)
+![Scenes and crossfader — A/B morph demo](docs/videos/scenes-crossfader.gif)
 
 ### Classic parameter browser
 
 Search, pin favourites, nudge anything. Handy when you don't know the exact
 parameter name yet.
 
-<video src="docs/videos/classic-parameters.mp4" controls autoplay loop muted playsinline width="100%"></video>
-
-![Classic parameter control surface](docs/screenshots/classic.png)
+![Classic parameter browser — search, pin, and tweak](docs/videos/classic-parameters.gif)
 
 ### Remote crossfader
 
 Crossfader-only surface for phones and tablets on your LAN — follows the active
 pattern from the desktop UI.
 
-<video src="docs/videos/remote-crossfader.mp4" controls autoplay loop muted playsinline width="360"></video>
-
-![Remote crossfader on a phone](docs/screenshots/remote.png)
+![Remote crossfader on a phone](docs/videos/remote-crossfader.gif)
 
 To regenerate these clips locally (uses the in-process fake plugin — no hardware
-required):
+required; writes MP4 + GIF under `docs/videos/`):
 
 ```bash
 cargo build --release
