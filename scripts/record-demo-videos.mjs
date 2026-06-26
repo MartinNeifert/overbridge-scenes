@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Record short feature demo videos for the README using the fake-plugin host.
+ * Record short feature demo clips for the README using the fake-plugin host.
+ * Writes MP4 (source) and GIF (README embed — GitHub strips <video> tags).
  *
  * Prerequisites:
  *   OB_FAKE_PLUGIN=1 ./target/release/ob-host --fake-plugin --port 7780
@@ -152,7 +153,29 @@ async function convertToMp4(webmPath, mp4Path) {
   await unlink(webmPath);
 }
 
-async function recordVideo(name, { viewport, setup, action }) {
+/** README-friendly GIF (GitHub renders these inline; <video> tags do not). */
+async function convertToGif(mp4Path, gifPath, { width }) {
+  const scale = `scale=${width}:-1:flags=lanczos`;
+  await new Promise((resolve, reject) => {
+    const proc = spawn(
+      "ffmpeg",
+      [
+        "-y",
+        "-i",
+        mp4Path,
+        "-vf",
+        `fps=12,${scale},split[s0][s1];[s0]palettegen=max_colors=128:stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=3`,
+        gifPath,
+      ],
+      { stdio: "inherit" },
+    );
+    proc.on("close", (code) =>
+      code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}`)),
+    );
+  });
+}
+
+async function recordVideo(name, { viewport, setup, action, gifWidth }) {
   await mkdir(TMP_DIR, { recursive: true });
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
@@ -172,14 +195,18 @@ async function recordVideo(name, { viewport, setup, action }) {
 
   const webmPath = await video.path();
   const mp4Path = path.join(OUT_DIR, `${name}.mp4`);
+  const gifPath = path.join(OUT_DIR, `${name}.gif`);
   await convertToMp4(webmPath, mp4Path);
+  await convertToGif(mp4Path, gifPath, { width: gifWidth ?? viewport.width });
   console.log(`✓ ${mp4Path}`);
-  return mp4Path;
+  console.log(`✓ ${gifPath}`);
+  return { mp4Path, gifPath };
 }
 
 async function recordScenesDemo() {
   return recordVideo("scenes-crossfader", {
     viewport: { width: 1280, height: 820 },
+    gifWidth: 960,
     setup: async (page) => {
       await page.goto(`${BASE_URL}/scenes.html`, { waitUntil: "networkidle" });
       await page.waitForSelector("#sc-crossfader");
@@ -205,6 +232,7 @@ async function recordScenesDemo() {
 async function recordParametersDemo() {
   return recordVideo("classic-parameters", {
     viewport: { width: 1280, height: 820 },
+    gifWidth: 960,
     setup: async (page) => {
       await page.goto(`${BASE_URL}/parameters.html`, {
         waitUntil: "networkidle",
@@ -258,7 +286,7 @@ async function main() {
   await recordScenesDemo();
   await recordParametersDemo();
   await recordRemoteDemo();
-  console.log("Done — videos in docs/videos/");
+  console.log("Done — MP4 + GIF demos in docs/videos/");
 }
 
 main().catch((err) => {
