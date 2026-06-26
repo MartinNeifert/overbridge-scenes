@@ -13,6 +13,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 use axum::http::{header, HeaderValue};
 
+use crate::crossfader::{self, CrossfaderApplyRequest, CrossfaderApplyResponse};
 use crate::devices;
 use crate::host::ParameterSnapshot;
 use crate::match_devices;
@@ -30,6 +31,7 @@ pub fn router(state: SharedState, web_dir: PathBuf) -> Router {
         .route("/api/select-plugin", post(select_plugin))
         .route("/api/parameters", get(list_parameters))
         .route("/api/parameters/batch", post(set_parameters_batch))
+        .route("/api/crossfader/apply", post(crossfader_apply))
         .route("/api/parameters/{index}", get(get_parameter))
         .route("/api/parameters/{index}", post(set_parameter))
         .route("/api/parameters/by-name", post(set_parameter_by_name))
@@ -161,6 +163,21 @@ async fn set_parameter_by_name(
         .find_parameter_by_name(&body.name)
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)
+}
+
+async fn crossfader_apply(
+    State(state): State<SharedState>,
+    Json(body): Json<CrossfaderApplyRequest>,
+) -> Result<Json<CrossfaderApplyResponse>, StatusCode> {
+    let state = state.clone();
+    tokio::task::spawn_blocking(move || crossfader::apply_crossfader(&state, &body))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map(Json)
+        .map_err(|e| {
+            tracing::error!("crossfader apply failed: {e:#}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })
 }
 
 async fn set_parameters_batch(

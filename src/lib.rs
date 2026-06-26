@@ -3,6 +3,7 @@
 pub mod api;
 pub mod bin_main;
 pub mod config;
+pub mod crossfader;
 pub mod devices;
 pub mod engine;
 pub mod host;
