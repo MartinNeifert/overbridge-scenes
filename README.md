@@ -28,6 +28,13 @@ parameter picker — the main event.
 
 ![Scenes and crossfader — A/B morph demo](docs/videos/scenes-crossfader.gif)
 
+### 2D quad crossfader
+
+Switch to **4 scenes (grid)** to assign a scene to each corner, then drag the pad
+to bilinearly morph between all four.
+
+![2D quad crossfader — grid morph demo](docs/videos/scenes-quad-fader.gif)
+
 ### Classic parameter browser
 
 Search, pin favourites, nudge anything. Handy when you don't know the exact
@@ -61,6 +68,8 @@ npm install && node scripts/record-demo-videos.mjs
   pick, at the values you want. Just like an Octatrack scene.
 - **A/B crossfader** — assign a scene to each side and drag to morph every mapped
   parameter live. Snap buttons too: `⟵ A` · `B ⟶`.
+- **2D quad crossfader** — assign four scenes to the grid corners and drag the pad
+  to morph bilinearly between them.
 - **Pattern baseline** — **Capture baseline** stores a neutral “home” per pattern
   for empty crossfader sides. No capture yet? Empty sides follow the live value.
 - **Param Learn** — hit **Learn** on a scene card, wiggle a knob, and the

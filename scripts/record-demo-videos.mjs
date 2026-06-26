@@ -37,7 +37,7 @@ async function waitForServer() {
   throw new Error(`Server not reachable at ${BASE_URL}`);
 }
 
-async function seedDemoData() {
+async function seedDemoData(crossfader) {
   const payload = {
     scenes: [
       {
@@ -75,7 +75,7 @@ async function seedDemoData() {
         ],
       },
     ],
-    crossfader: { mode: "ab", a: "1", b: "2", pos: 0 },
+    crossfader,
     baseline: {
       explicit: true,
       values: [
@@ -99,6 +99,15 @@ async function seedDemoData() {
   }
 }
 
+const AB_CROSSFADER = { mode: "ab", a: "1", b: "2", pos: 0 };
+
+const QUAD_CROSSFADER = {
+  mode: "quad",
+  corners: { tl: "1", tr: "2", bl: "3", br: "4" },
+  x: 0.5,
+  y: 0.5,
+};
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -121,6 +130,32 @@ async function animateRange(page, selector, from, to, durationMs) {
     },
     { selector, from, to, durationMs },
   );
+}
+
+/** Drag the 2D crossfader pad; x/y are normalized 0..1 within the pad. */
+async function dragPad(page, padSelector, from, to, durationMs) {
+  const pad = page.locator(padSelector);
+  const box = await pad.boundingBox();
+  if (!box) throw new Error(`Pad not visible: ${padSelector}`);
+
+  const px = (x) => box.x + box.width * x;
+  const py = (y) => box.y + box.height * y;
+
+  await page.mouse.move(px(from.x), py(from.y));
+  await page.mouse.down();
+
+  const steps = Math.max(24, Math.round(durationMs / 16));
+  const stepDelay = durationMs / steps;
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    const x = from.x + (to.x - from.x) * eased;
+    const y = from.y + (to.y - from.y) * eased;
+    await page.mouse.move(px(x), py(y));
+    await sleep(stepDelay);
+  }
+
+  await page.mouse.up();
 }
 
 async function convertToMp4(webmPath, mp4Path) {
@@ -256,10 +291,43 @@ async function recordParametersDemo() {
   });
 }
 
+async function recordQuadFaderDemo() {
+  return recordVideo("scenes-quad-fader", {
+    viewport: { width: 1280, height: 820 },
+    gifWidth: 960,
+    setup: async (page) => {
+      await seedDemoData(QUAD_CROSSFADER);
+      await page.goto(`${BASE_URL}/scenes.html`, { waitUntil: "networkidle" });
+      await page.waitForSelector("#sc-xf-pad");
+      await page.waitForFunction(
+        () => !document.getElementById("sc-xf-quad")?.classList.contains("hidden"),
+        { timeout: 10000 },
+      );
+      await page.waitForFunction(
+        () => document.getElementById("sc-xf-mode")?.value === "quad",
+        { timeout: 10000 },
+      );
+    },
+    action: async (page) => {
+      const center = { x: 0.5, y: 0.5 };
+      await dragPad(page, "#sc-xf-pad", center, { x: 0.08, y: 0.08 }, 1400);
+      await sleep(350);
+      await dragPad(page, "#sc-xf-pad", { x: 0.08, y: 0.08 }, { x: 0.92, y: 0.08 }, 1200);
+      await sleep(350);
+      await dragPad(page, "#sc-xf-pad", { x: 0.92, y: 0.08 }, { x: 0.92, y: 0.92 }, 1200);
+      await sleep(350);
+      await dragPad(page, "#sc-xf-pad", { x: 0.92, y: 0.92 }, { x: 0.08, y: 0.92 }, 1200);
+      await sleep(350);
+      await dragPad(page, "#sc-xf-pad", { x: 0.08, y: 0.92 }, center, 1400);
+    },
+  });
+}
+
 async function recordRemoteDemo() {
   return recordVideo("remote-crossfader", {
     viewport: { width: 390, height: 844 },
     setup: async (page) => {
+      await seedDemoData(AB_CROSSFADER);
       await page.goto(`${BASE_URL}/remote.html?pattern=${PATTERN}`, {
         waitUntil: "networkidle",
       });
@@ -281,9 +349,10 @@ async function recordRemoteDemo() {
 async function main() {
   await mkdir(OUT_DIR, { recursive: true });
   await waitForServer();
-  await seedDemoData();
+  await seedDemoData(AB_CROSSFADER);
   console.log("Seeded demo scenes for", PLUGIN, PATTERN);
   await recordScenesDemo();
+  await recordQuadFaderDemo();
   await recordParametersDemo();
   await recordRemoteDemo();
   console.log("Done — MP4 + GIF demos in docs/videos/");
