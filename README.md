@@ -19,12 +19,14 @@ plugin and serves the web UI from your Mac.
 
 ---
 
-## Screenshots
+## Screenshots & demos
 
 ### Scenes & crossfader
 
 Pattern bar, A/B assignment, crossfader, clock slide, four scene slots, and the
 parameter picker — the main event.
+
+<video src="docs/videos/scenes-crossfader.mp4" controls autoplay loop muted playsinline width="100%"></video>
 
 ![Scenes and crossfader control surface](docs/screenshots/scenes.png)
 
@@ -33,7 +35,27 @@ parameter picker — the main event.
 Search, pin favourites, nudge anything. Handy when you don't know the exact
 parameter name yet.
 
+<video src="docs/videos/classic-parameters.mp4" controls autoplay loop muted playsinline width="100%"></video>
+
 ![Classic parameter control surface](docs/screenshots/classic.png)
+
+### Remote crossfader
+
+Crossfader-only surface for phones and tablets on your LAN — follows the active
+pattern from the desktop UI.
+
+<video src="docs/videos/remote-crossfader.mp4" controls autoplay loop muted playsinline width="360"></video>
+
+![Remote crossfader on a phone](docs/screenshots/remote.png)
+
+To regenerate these clips locally (uses the in-process fake plugin — no hardware
+required):
+
+```bash
+cargo build --release
+OB_FAKE_PLUGIN=1 ./target/release/ob-host --fake-plugin --port 7780 &
+npm install && node scripts/record-demo-videos.mjs
+```
 
 ---
 

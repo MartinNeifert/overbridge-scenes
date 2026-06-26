@@ -1,4 +1,5 @@
 /target/
+/node_modules/
 /plugins/
 /vendor/*
 !/vendor/truce-rack-vst3/
@@ -7,3 +8,4 @@
 config/local.json
 config/mappings.local.json
 data/scenes/
+docs/videos/.tmp/
