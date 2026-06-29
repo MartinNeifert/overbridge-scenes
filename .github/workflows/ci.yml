@@ -25,5 +25,8 @@ jobs:
       - name: cargo check
         run: cargo check --release
 
+      - name: cargo check remote VST
+        run: cargo check -p ob-remote-vst --release
+
       - name: Live fake-plugin smoke
         run: ./scripts/test-params.sh --live

@@ -157,3 +157,40 @@ async fn host_edit_not_treated_as_preset_load() {
         cutoff.value
     );
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn crossfader_apply_morphs_via_http() {
+    use std::sync::Arc;
+
+    let dir = std::env::temp_dir().join(format!("ob-xf-api-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let state = crate::test_support::fake_app_state_with_scenes_dir(dir.clone())
+        .expect("app state");
+    let app = test_router(Arc::clone(&state));
+
+    let payload = serde_json::json!({
+        "scenes": [
+            {"id":"1","name":"A","params":[{"index":0,"id":1,"name":"Filter Cutoff","value":0.0}]},
+            {"id":"2","name":"B","params":[{"index":0,"id":1,"name":"Filter Cutoff","value":1.0}]}
+        ],
+        "crossfader": {"a":"1","b":"2","pos":0.0},
+        "baseline": {"explicit":false,"values":[]}
+    });
+    state
+        .scenes_store()
+        .save("OB Test Host", "A01", &payload)
+        .unwrap();
+
+    let post = post_json(
+        &app,
+        "/api/crossfader/apply",
+        r#"{"pattern":"A01","pos":0.6}"#,
+    )
+    .await;
+    assert!(post.is_success());
+
+    let cutoff = state.host().get_parameter(0).expect("cutoff");
+    assert!((cutoff.value - 0.6).abs() < 1e-6);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
