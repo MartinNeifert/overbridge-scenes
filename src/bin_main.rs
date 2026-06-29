@@ -150,8 +150,11 @@ pub async fn run_with_cli(cli: Cli) -> Result<()> {
 
         tracing::info!("Loading plugin: {}", plugin_info.name);
 
+        let engine_path = std::env::var("OB_OVERBRIDGE_ENGINE")
+            .unwrap_or_else(|_| cfg.overbridge_engine.clone());
+
         if !cli.no_engine {
-            engine::ensure_overbridge_engine(&cfg.overbridge_engine)?;
+            engine::ensure_overbridge_engine(&engine_path)?;
         }
 
         let instance = scanner

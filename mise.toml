@@ -1,0 +1,372 @@
+# Dev tools and project tasks.
+#
+# One-shot setup:         mise run setup        (auto-detects macOS vs Linux)
+# Daily dev:              mise run build | test | serve
+# Docs:                   docs/designs/linux-overbridge-testing.md
+
+[tools]
+rust = "1.90.0" # matches rust-toolchain.toml
+node = "22"     # for npm test / record-demos (Node 18+ required)
+
+[env]
+# Tier 2 Overbridge spike — isolated Wine prefix (Wine requires an absolute path)
+WINEPREFIX = "{{ env.HOME }}/.wine-overbridge"
+WINEARCH = "win64"
+# Windows Overbridge installer (download from Elektron; override if path differs)
+OB_OVERBRIDGE_MSI = "{{ env.HOME }}/Downloads/Elektron_Overbridge_2.25.7/Elektron Overbridge Installer 64bit 2.25.7 .msi"
+OB_OVERBRIDGE_ENGINE = "{{ env.HOME }}/.wine-overbridge/drive_c/Program Files/Elektron/Overbridge Engine/Overbridge Engine.exe"
+# yabridge prebuilt install (scripts/yabridge-install.sh)
+YABRIDGE_VERSION = "5.1.1"
+_.path = ["{{ env.HOME }}/.local/share/yabridge"]
+
+# --- One-shot setup (macOS or Linux) ---
+
+[tasks.setup]
+description = "Full dev setup — dispatches to setup:mac or setup:linux"
+run = """
+set -euo pipefail
+case "$(uname -s)" in
+  Darwin) mise run setup:mac ;;
+  Linux)  mise run setup:linux ;;
+  *)
+    echo "setup supports macOS and Linux only (found: $(uname -s))" >&2
+    exit 1
+    ;;
+esac
+"""
+
+[tasks."setup:dev"]
+description = "Dev setup without Wine/plugins — dispatches by OS"
+run = """
+set -euo pipefail
+case "$(uname -s)" in
+  Darwin) mise run setup:mac:dev ;;
+  Linux)  mise run setup:linux:dev ;;
+  *)
+    echo "setup:dev supports macOS and Linux only" >&2
+    exit 1
+    ;;
+esac
+"""
+
+[tasks."setup:mac"]
+description = "macOS setup (tools, npm, Elektron plugins, build, test)"
+run = """
+set -euo pipefail
+echo "==> mise tools (rust, node)"
+mise install
+echo "==> npm dependencies"
+mise run setup:npm
+echo "==> Elektron plugins (if Overbridge is installed)"
+mise run setup:mac:plugins
+echo "==> build"
+mise run build
+echo "==> test"
+mise run test
+echo ""
+echo "Setup complete."
+mise run setup:mac:note
+"""
+
+[tasks."setup:mac:dev"]
+description = "macOS dev setup without copying Elektron plugins"
+run = """
+set -euo pipefail
+mise install
+mise run setup:npm
+mise run build
+mise run test
+echo "Dev setup complete. Run: mise run serve  (or install Overbridge and re-run setup)"
+"""
+
+[tasks."setup:mac:plugins"]
+description = "Copy Elektron VST3s and Engine reference from system install"
+run = """
+set -euo pipefail
+if [[ -d /Library/Audio/Plug-Ins/VST3/Elektron ]]; then
+  bash scripts/copy-plugins.sh
+  if [[ -d "/Applications/Elektron/Overbridge Engine.app" ]]; then
+    mkdir -p vendor
+    if [[ ! -d "vendor/Overbridge Engine.app" ]]; then
+      echo "Copying Overbridge Engine reference to vendor/ ..."
+      cp -R "/Applications/Elektron/Overbridge Engine.app" vendor/
+    fi
+  fi
+else
+  echo "Elektron VST3s not found at /Library/Audio/Plug-Ins/VST3/Elektron"
+  echo "Install Overbridge for hardware use — fake-plugin dev still works (mise run serve)"
+fi
+"""
+
+[tasks."setup:mac:note"]
+description = "Print macOS run steps after setup"
+run = """
+cat <<'EOF'
+Hardware (Digitakt, etc.):
+  ./scripts/start-engine.sh
+  RUST_LOG=info ./target/release/ob-host --plugin Digitakt
+  open http://127.0.0.1:7780/scenes.html
+
+Dev without hardware:
+  mise run serve    # fake plugin → http://127.0.0.1:7780/scenes.html
+EOF
+"""
+
+[tasks."setup:linux"]
+description = "Ubuntu/Linux setup (apt, tools, npm, wine prefix, build, test)"
+run = """
+set -eu
+echo "==> system packages (sudo)"
+mise run setup:apt
+echo "==> mise tools (rust, node)"
+mise install
+echo "==> npm dependencies"
+mise run setup:npm
+echo "==> wine prefix"
+mise run wine:init
+echo "==> Overbridge MSI"
+mise run wine:install-overbridge
+echo "==> yabridge (optional — for DAWs, not ob-host)"
+mise run yabridge:install
+echo "==> build"
+mise run build
+echo "==> test"
+mise run test
+echo ""
+echo "Setup complete."
+mise run wine:note
+"""
+
+[tasks."setup:linux:dev"]
+description = "Linux setup without Wine (CI parity: apt, tools, build, test)"
+run = """
+set -euo pipefail
+mise run setup:apt:build
+mise install
+mise run setup:npm
+mise run build
+mise run test
+echo "Dev setup complete (no Wine). Run: mise run serve"
+"""
+
+[tasks."setup:apt"]
+description = "Install build + Wine system packages (sudo)"
+run = """
+set -euo pipefail
+mise run setup:apt:build
+mise run wine:deps
+"""
+
+[tasks."setup:apt:build"]
+description = "Install Rust/build system packages (sudo)"
+run = """
+set -euo pipefail
+sudo apt-get update
+sudo apt-get install -y build-essential pkg-config libasound2-dev curl jq p7zip-full
+"""
+
+[tasks."setup:npm"]
+description = "Install Node dependencies (playwright, etc.)"
+run = "npm install"
+
+[tasks.build]
+description = "Build release ob-host"
+run = "cargo build --release"
+
+[tasks.test]
+description = "Full test suite (Rust + npm morph math)"
+run = "./scripts/test.sh"
+
+[tasks."test:live"]
+description = "Fake-plugin HTTP smoke test on :3848"
+run = "./scripts/test-params.sh --live"
+
+[tasks.serve]
+description = "Fake-plugin server at http://127.0.0.1:7780 (no Elektron required)"
+depends = ["build"]
+env = { OB_FAKE_PLUGIN = "1", RUST_LOG = "info" }
+run = "./target/release/ob-host --fake-plugin --port 7780"
+
+# --- Linux VST / Wine (experimental) ---
+
+[tasks."wine:deps"]
+description = "Install Wine + winetricks via apt (one-time, requires sudo)"
+run = """
+set -euo pipefail
+sudo dpkg --add-architecture i386
+sudo apt-get update
+sudo apt-get install -y wine64 wine32 winetricks
+"""
+
+[tasks."wine:check"]
+description = "Verify wine and winetricks are installed"
+run = """
+command -v wine >/dev/null || { echo "wine not found — run: mise run setup or wine:deps" >&2; exit 1; }
+command -v winetricks >/dev/null || { echo "winetricks not found — run: mise run setup or wine:deps" >&2; exit 1; }
+wine --version
+echo "WINEPREFIX=$WINEPREFIX"
+"""
+
+[tasks."wine:runtimes"]
+description = "Install VC++ 2022 runtime (--force; required for Overbridge MSI bootstrapper)"
+depends = ["wine:check"]
+run = """
+set -eu
+# vcrun2022 conflicts with vcrun2019 if present; --force replaces it.
+# Installs 32- and 64-bit MSVCP140.dll (fixes MSI error c000007b).
+winetricks -q --force vcrun2022
+"""
+
+[tasks."wine:init"]
+description = "Initialize Wine prefix and install VC++ 2022 runtime"
+depends = ["wine:runtimes"]
+run = """
+set -eu
+wineboot --init
+echo ""
+echo "Wine prefix ready at: $WINEPREFIX"
+"""
+
+[tasks."wine:extract-overbridge"]
+description = "Extract VST3 bundles from MSI without running the installer (Wine fallback)"
+run = "bash scripts/wine-extract-overbridge.sh"
+
+[tasks."wine:install-overbridge"]
+description = "Install Overbridge — try MSI, fall back to offline VST3 extract"
+depends = ["wine:init"]
+run = """
+set -eu
+MSI="$OB_OVERBRIDGE_MSI"
+if [ ! -f "$MSI" ]; then
+  echo "Overbridge MSI not found: $MSI" >&2
+  exit 1
+fi
+LOG="${HOME}/.cache/overbridge-msi-install.log"
+mkdir -p "${HOME}/.cache"
+echo "Installing Overbridge from: $MSI"
+echo "Trying MSI installer (GUI — Elektron says disconnect devices first)..."
+if wine msiexec /i "$MSI" /L*V "$LOG"; then
+  echo "MSI install finished. Log: $LOG"
+else
+  echo ""
+  echo "MSI failed under Wine (common: MSVCP140, CheckForDevicesAction)."
+  echo "Log: $LOG"
+  echo "Falling back to offline VST3 extract..."
+  bash scripts/wine-extract-overbridge.sh
+fi
+"""
+
+[tasks."wine:note"]
+description = "Print next steps after Linux setup"
+run = """
+cat <<'EOF'
+Linux setup complete (Wine prefix, Overbridge VST3 extract, optional yabridge).
+
+ob-host cannot load Windows PE VST3s directly; use yabridge for Tier 2 plugin load:
+
+  mise run yabridge:add-overbridge   # once: bridge Digitakt from Wine prefix
+  mise run host:yabridge             # load Digitakt via ~/.vst3/yabridge
+
+Fake plugin + web UI (no real VST):
+
+  mise run serve              # http://127.0.0.1:7780/scenes.html
+
+Wine Engine + fake plugin (API engine_running only):
+
+  mise run wine:run
+  curl http://127.0.0.1:7780/api/status | jq .engine_running
+
+Real Overbridge + hardware: macOS (mise run setup on a Mac).
+EOF
+"""
+
+[tasks."wine:start-engine"]
+description = "Start Overbridge Engine in Wine (background; USB unlikely to work)"
+run = """
+set -eu
+ENGINE="$OB_OVERBRIDGE_ENGINE"
+if [ ! -f "$ENGINE" ]; then
+  echo "Engine not found — run: mise run wine:extract-overbridge" >&2
+  exit 1
+fi
+if pgrep -f '/Overbridge Engine/Overbridge Engine.exe' >/dev/null 2>&1; then
+  echo "Overbridge Engine already running in Wine"
+  exit 0
+fi
+wine "$ENGINE" >/dev/null 2>&1 &
+sleep 3
+if pgrep -f '/Overbridge Engine/Overbridge Engine.exe' >/dev/null 2>&1; then
+  echo "Started Overbridge Engine in Wine"
+else
+  echo "Engine may have failed to start — try: wine \"$ENGINE\"" >&2
+  exit 1
+fi
+"""
+
+[tasks."wine:run"]
+description = "Start Wine Engine + ob-host fake plugin (real VST load not supported on Linux)"
+depends = ["build"]
+run = """
+set -eu
+mise run wine:start-engine
+RUST_LOG="${RUST_LOG:-info}" OB_FAKE_PLUGIN=1 ./target/release/ob-host --fake-plugin --port 7780
+"""
+
+[tasks."yabridge:install"]
+description = "Download yabridge to ~/.local/share/yabridge"
+run = "bash scripts/yabridge-install.sh"
+
+[tasks."yabridge:add-overbridge"]
+description = "Add Overbridge VST3s to yabridge and sync"
+depends = ["yabridge:install"]
+run = """
+set -eu
+VST3_ROOT="$WINEPREFIX/drive_c/Program Files/Common Files/VST3"
+if [ ! -d "$VST3_ROOT/Digitakt.vst3" ]; then
+  echo "Digitakt.vst3 not found in $VST3_ROOT" >&2
+  echo "Run: mise run wine:extract-overbridge" >&2
+  exit 1
+fi
+yabridgectl add "$VST3_ROOT/Digitakt.vst3"
+yabridgectl sync
+echo "Bridged plugins in ~/.vst3/yabridge"
+"""
+
+[tasks."yabridge:sync"]
+description = "Sync yabridge wrappers to ~/.vst3/yabridge"
+depends = ["yabridge:install"]
+run = "yabridgectl sync"
+
+[tasks."host:linux-vst"]
+description = "Run ob-host with a native Linux VST3 from ~/.vst3 (Tier 1)"
+depends = ["build"]
+run = """
+: "${OB_PLUGIN:?Set OB_PLUGIN to the plugin name, e.g. OB_PLUGIN=MyPlugin}"
+./target/release/ob-host --plugin "$OB_PLUGIN" --plugin-dir "$HOME/.vst3" --no-engine
+"""
+
+[tasks."host:yabridge"]
+description = "Load Overbridge VST via yabridge chainloader (Tier 2 spike, no USB)"
+depends = ["build"]
+run = """
+set -eu
+PLUGIN="${OB_PLUGIN:-Digitakt}"
+YABRIDGE_DIR="${OB_YABRIDGE_DIR:-$HOME/.vst3/yabridge}"
+PORT="${OB_PORT:-7780}"
+if [ ! -d "$YABRIDGE_DIR/${PLUGIN}.vst3" ]; then
+  echo "yabridge wrapper not found: $YABRIDGE_DIR/${PLUGIN}.vst3" >&2
+  echo "Run: mise run yabridge:add-overbridge" >&2
+  exit 1
+fi
+command -v yabridgectl >/dev/null && yabridgectl sync >/dev/null 2>&1 || true
+RUST_LOG="${RUST_LOG:-info}" ./target/release/ob-host \
+  --plugin "$PLUGIN" \
+  --plugin-dir "$YABRIDGE_DIR" \
+  --no-engine \
+  --port "$PORT"
+"""
+
+[tasks."host:wine"]
+description = "Alias for host:yabridge (Windows Overbridge VST via yabridge)"
+depends = ["build"]
+run = "mise run host:yabridge"

@@ -81,6 +81,14 @@ const BUNDLE_ENTRY_SYMBOL: &[u8] = b"bundleEntry\0";
 #[cfg(target_os = "macos")]
 const BUNDLE_EXIT_SYMBOL: &[u8] = b"bundleExit\0";
 
+/// Windows / yabridge chainloader module entry (VST3 `moduleinfo.json` lifecycle).
+#[cfg(not(target_os = "macos"))]
+const MODULE_ENTRY_SYMBOL: &[u8] = b"ModuleEntry\0";
+
+/// Windows / yabridge chainloader module exit.
+#[cfg(not(target_os = "macos"))]
+const MODULE_EXIT_SYMBOL: &[u8] = b"ModuleExit\0";
+
 /// Stereo speaker arrangement = `kSpeakerL | kSpeakerR`. Defined
 /// here to avoid a `kSpeaker*` import dance.
 const STEREO_ARRANGEMENT: u64 = 0x03;
@@ -426,6 +434,9 @@ fn bundle_binary_path(bundle: &Path) -> PathBuf {
 #[cfg(not(target_os = "macos"))]
 struct LoadedModule {
     library: libloading::Library,
+    /// True when `ModuleEntry` ran successfully (yabridge chainloaders require this
+    /// before `GetPluginFactory`; plain Linux `.so` plugins omit the symbol).
+    module_entered: bool,
 }
 
 #[cfg(target_os = "macos")]
@@ -443,7 +454,29 @@ impl LoadedModule {
                 path: bundle.to_path_buf(),
                 reason: format!("dlopen: {e}"),
             })?;
-        Ok(Self { library })
+
+        let module_entered = unsafe {
+            match library.get::<unsafe extern "C" fn(*mut std::ffi::c_void) -> bool>(
+                MODULE_ENTRY_SYMBOL,
+            ) {
+                Ok(entry) => {
+                    if !entry(std::ptr::null_mut()) {
+                        return Err(Error::LoadFailed {
+                            path: bundle.to_path_buf(),
+                            reason: "ModuleEntry returned false (yabridge/Wine host may be unavailable)"
+                                .into(),
+                        });
+                    }
+                    true
+                }
+                Err(_) => false,
+            }
+        };
+
+        Ok(Self {
+            library,
+            module_entered,
+        })
     }
 
     fn factory(&self) -> Result<ComPtr<IPluginFactory>> {
@@ -460,6 +493,22 @@ impl LoadedModule {
             }
         })?;
         Ok(factory)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+impl Drop for LoadedModule {
+    fn drop(&mut self) {
+        if self.module_entered
+            && let Ok(exit) = unsafe {
+                self.library
+                    .get::<unsafe extern "C" fn() -> bool>(MODULE_EXIT_SYMBOL)
+            }
+        {
+            unsafe {
+                exit();
+            }
+        }
     }
 }
 
